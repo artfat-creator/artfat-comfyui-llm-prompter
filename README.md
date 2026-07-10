@@ -143,6 +143,18 @@ Keep `force_offload` **off** to keep the LLM resident (fast repeat prompting). T
 only on low-VRAM systems to free VRAM for diffusion — the trade-off is a model reload on the
 next LLM call. The node also frees the LLM when ComfyUI unloads all models.
 
+### By VRAM (LLM running next to a diffusion model)
+
+| GPU VRAM | Suggested setup |
+|---|---|
+| **8 GB** | A lighter model ([Qwen3-VL-4B](https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF)) or a Q4 9B with `force_offload = true` so the LLM unloads before sampling. Set `type_k` / `type_v = q8_0` and a few `n_cpu_moe` layers. |
+| **12 GB** (shared) | 9B at Q4_K_M. Either `force_offload = true` for heavy diffusion models, or keep it resident and raise `n_cpu_moe` to push MoE experts to CPU. Use `vram_limit` to cap the LLM's share. |
+| **16 GB** | 9B at Q5 / Q6 kept resident (`force_offload = false`) → instant repeat prompting. |
+| **24 GB+** | 9B or larger at Q6 / Q8 fully on GPU, resident, comfortably beside diffusion. |
+
+Running the LLM on its own (no diffusion in the same graph)? Everything fits far more easily —
+keep it resident and enjoy near-instant prompts.
+
 ## Power tips
 
 - **Any field can become an input.** Right-click the node → *Convert … to input* (or just drag a
