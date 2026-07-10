@@ -47,6 +47,20 @@ Prefer feeding the prompt from an external node? Right-click the node →
 **Convert instruction to input** (and/or `negative`) and wire any text / note node into it.
 Both ways work — type in the box, or drive it from outside, whatever you're used to.
 
+## Example: compose across two images
+
+Set `mode = composite`, connect both `image_1` and `image_2`, and refer to the two
+references as **Image 1** and **Image 2** in the instruction. For example — put the subject
+from one reference into the scene of the other:
+
+> Take the same girl as in reference Image 1 and place her — in the exact same setting as
+> reference Image 2 — sitting and reading a book. Write a detailed generation prompt, like
+> the one you'd write for Image 2, but with the girl from Image 1.
+
+The node feeds both images to the model (`image_1` → "Image 1", `image_2` → "Image 2"), so the
+generated prompt keeps Image 2's setting with Image 1's subject. Short, concrete instructions that
+name the images explicitly work best.
+
 ## Install
 
 ```bash
