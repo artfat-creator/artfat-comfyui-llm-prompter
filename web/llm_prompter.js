@@ -1,5 +1,4 @@
 import { app } from "../../scripts/app.js";
-import { ComfyWidgets } from "../../scripts/widgets.js";
 
 const ADVANCED = [
     "max_tokens", "temperature",
@@ -52,6 +51,9 @@ function bindAutofill(node, presetName, targetName, route) {
     };
 }
 
+// This extension only touches presentation — it never adds a serialized widget and never
+// reorders real widgets, so the saved widget values can never shift. The generated prompt is
+// on the `prompt` output; wire it to a Show Text / Preview Text node to see it on the canvas.
 app.registerExtension({
     name: "artfat.llm.prompter",
     async beforeRegisterNodeDef(nodeType, nodeData) {
@@ -62,20 +64,6 @@ app.registerExtension({
             onCreated && onCreated.apply(this, arguments);
             const node = this;
             node._advOpen = false;
-
-            // Read-only mirror of the final prompt. Appended LAST and NOT serialized, so it can
-            // never shift the saved widget values. (No real widget is ever reordered.)
-            const disp = ComfyWidgets["STRING"](
-                node, "final_prompt", ["STRING", { multiline: true }], app
-            ).widget;
-            if (disp.inputEl) {
-                disp.inputEl.readOnly = true;
-                disp.inputEl.style.opacity = "0.85";
-                disp.inputEl.placeholder = "final prompt appears here after Queue";
-            }
-            disp.serialize = false;
-            disp.serializeValue = () => undefined;
-            node._disp = disp;
 
             const en = widget(node, "llm_enabled");
             if (en) en.label = "⚡ LLM enabled";
@@ -100,11 +88,8 @@ app.registerExtension({
             const suffix = widget(node, "suffix");
             if (suffix) suffix.label = "suffix: quality tags";
 
-            // No forced widget heights — they fight ComfyUI's native multiline layout and cause
-            // the boxes to drift/jitter. Native sizing is stable; drag the node corner to enlarge.
-
-            // Advanced toggle — appended LAST (after final_prompt), so no hidden widget is ever
-            // the terminal widget and nothing dangles.
+            // Advanced collapse — hides the sampler/KV/image widgets IN PLACE (never reordered,
+            // never serialized). The button is a no-value widget appended last.
             const btn = node.addWidget("button", "▸ advanced", null, () => {
                 node._advOpen = !node._advOpen;
                 btn.name = (node._advOpen ? "▾" : "▸") + " advanced";
@@ -125,29 +110,7 @@ app.registerExtension({
             bindAutofill(node, "system_preset", "system_prompt", "/artfat_llm/system_preset");
             bindAutofill(node, "instruction_preset", "instruction", "/artfat_llm/instruction_preset");
 
-            // Move ONLY the final_prompt display to sit right after 'negative'. It is not
-            // serialized (serialize=false), so repositioning it never shifts saved values —
-            // real widgets keep their exact INPUT_TYPES order.
-            const di = node.widgets.indexOf(disp);
-            if (di > -1) {
-                node.widgets.splice(di, 1);
-                const ni = node.widgets.findIndex((w) => w.name === "negative");
-                if (ni > -1) node.widgets.splice(ni + 1, 0, disp);
-                else node.widgets.push(disp);
-            }
-
             setTimeout(relayout, 20);
-        };
-
-        const onExecuted = nodeType.prototype.onExecuted;
-        nodeType.prototype.onExecuted = function (message) {
-            onExecuted && onExecuted.apply(this, arguments);
-            if (!message || !message.text) return;
-            const text = Array.isArray(message.text) ? message.text.join("\n\n") : message.text;
-            if (this._disp) {
-                this._disp.value = text;
-                this.setDirtyCanvas(true, true);
-            }
         };
     },
 });
