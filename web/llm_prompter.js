@@ -122,6 +122,17 @@ app.registerExtension({
             bindAutofill(node, "system_preset", "system_prompt", "/artfat_llm/system_preset");
             bindAutofill(node, "instruction_preset", "instruction", "/artfat_llm/instruction_preset");
 
+            // Move ONLY the final_prompt display to sit right after 'negative'. It is not
+            // serialized (serialize=false), so repositioning it never shifts saved values —
+            // real widgets keep their exact INPUT_TYPES order.
+            const di = node.widgets.indexOf(disp);
+            if (di > -1) {
+                node.widgets.splice(di, 1);
+                const ni = node.widgets.findIndex((w) => w.name === "negative");
+                if (ni > -1) node.widgets.splice(ni + 1, 0, disp);
+                else node.widgets.push(disp);
+            }
+
             setTimeout(relayout, 20);
         };
 
