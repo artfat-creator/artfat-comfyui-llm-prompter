@@ -48,11 +48,20 @@ class AnyType(str):
 any_type = AnyType("*")
 
 _THINK_RE = re.compile(r"<think(?:ing)?>.*?</think(?:ing)?>", re.S | re.I)
+_CLOSE_RE = re.compile(r"</think(?:ing)?>", re.I)
 
 
 def _clean(text, keep_think):
     if not keep_think:
+        # Remove paired <think>...</think> blocks.
         text = _THINK_RE.sub("", text)
+        # Some reasoning models emit thoughts with only a closing tag (no opening);
+        # keep everything after the LAST closing tag.
+        last = None
+        for last in _CLOSE_RE.finditer(text):
+            pass
+        if last:
+            text = text[last.end():]
     text = text.strip()
     text = text.removeprefix("```json").removeprefix("```")
     text = text.removesuffix("```")
@@ -83,6 +92,19 @@ def _encode(clip, text):
     return clip.encode_from_tokens_scheduled(tokens)
 
 
+def _num(v, default, lo=None, hi=None, cast=float):
+    """Coerce a widget value to a number, falling back to default and clamping."""
+    try:
+        x = cast(v)
+    except (TypeError, ValueError):
+        return default
+    if lo is not None and x < lo:
+        x = lo
+    if hi is not None and x > hi:
+        x = hi
+    return x
+
+
 class ArtfatLLMPrompter:
     @classmethod
     def INPUT_TYPES(cls):
@@ -103,29 +125,30 @@ class ArtfatLLMPrompter:
                 "llm_enabled": ("BOOLEAN", {"default": True,
                                             "tooltip": "OFF = skip the LLM and encode the instruction text as a plain CLIP Text Encode."}),
                 "system_preset": (sys_presets, {"default": "Custom"}),
+                "mode": (["composite", "batch"], {"default": "composite",
+                         "tooltip": "composite: all images -> one prompt.  batch: each image -> its own caption (dataset)."}),
+                "seed": ("INT", {"default": 0, "min": -1, "max": 0xffffffffffffffff, "step": 1,
+                                 "tooltip": "Fixed seed reuses the cached prompt. -1 = random each call. Use control_after_generate=randomize for a fresh prompt every queue."}),
+                "force_offload": ("BOOLEAN", {"default": False,
+                                              "tooltip": "Unload the LLM from VRAM after running (frees VRAM for diffusion; next LLM call reloads)."}),
+                "prefix": ("STRING", {"default": "", "multiline": False,
+                                      "placeholder": "added BEFORE the prompt — e.g. LoRA trigger word",
+                                      "tooltip": "Text auto-prepended to the final prompt before CLIP encode. Use it for a LoRA trigger word so you never type it into the prompt by hand."}),
+                "suffix": ("STRING", {"default": "", "multiline": False,
+                                      "placeholder": "added AFTER the prompt — e.g. quality tags",
+                                      "tooltip": "Text auto-appended to the final prompt before CLIP encode. Use it for trailing style/quality tags (e.g. 'amateur photo, film grain')."}),
+                "instruction_preset": (INSTRUCTION_NAMES, {"default": "Describe -> prompt"}),
                 "system_prompt": ("STRING", {"default": "", "multiline": True,
                                              "placeholder": "system prompt (auto-filled from preset, editable)"}),
-                "instruction_preset": (INSTRUCTION_NAMES, {"default": "Describe -> prompt"}),
                 "instruction": ("STRING", {"default": "", "multiline": True,
                                            "placeholder": "task / instruction (auto-filled from preset, editable)"}),
                 "user_preset": ("STRING", {"default": "", "multiline": True,
                                            "placeholder": "extra ad-hoc instructions, appended (not saved to a file)"}),
                 "negative": ("STRING", {"default": "", "multiline": True,
                                         "placeholder": "negative prompt (encoded to the negative output)"}),
-                "prefix": ("STRING", {"default": "", "multiline": False,
-                                      "placeholder": "prepended to the final prompt (e.g. LoRA trigger word)"}),
-                "suffix": ("STRING", {"default": "", "multiline": False}),
-                "mode": (["composite", "batch"], {"default": "composite",
-                         "tooltip": "composite: all images -> one prompt.  batch: each image -> its own caption (dataset)."}),
+                # --- advanced (collapsed by web/llm_prompter.js) ---
                 "max_tokens": ("INT", {"default": 512, "min": 16, "max": 8192, "step": 16}),
                 "temperature": ("FLOAT", {"default": 0.6, "min": 0.0, "max": 2.0, "step": 0.01}),
-                "seed": ("INT", {"default": 0, "min": -1, "max": 0xffffffffffffffff, "step": 1,
-                                 "tooltip": "Fixed seed reuses the cached prompt. -1 = random each call. Use control_after_generate=randomize for a fresh prompt every queue."}),
-                "force_offload": ("BOOLEAN", {"default": False,
-                                              "tooltip": "Unload the LLM from VRAM after running (frees VRAM for diffusion; next LLM call reloads)."}),
-                "reasoning": (["auto", "on", "off"], {"default": "off",
-                              "tooltip": "off/auto = strip <think> blocks from the output. on = keep them."}),
-                # --- advanced (collapsed by web/llm_prompter.js) ---
                 "top_k": ("INT", {"default": 40, "min": 0, "max": 1000, "step": 1}),
                 "top_p": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "min_p": ("FLOAT", {"default": 0.05, "min": 0.0, "max": 1.0, "step": 0.01}),
@@ -151,9 +174,9 @@ class ArtfatLLMPrompter:
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
 
-    RETURN_TYPES = ("CONDITIONING", "CONDITIONING", "STRING", "STRING", "IMAGE", "IMAGE", any_type)
-    RETURN_NAMES = ("positive", "negative", "prompt", "prompt_list", "image_1", "image_2", "queue")
-    OUTPUT_IS_LIST = (False, False, False, True, False, False, False)
+    RETURN_TYPES = ("CONDITIONING", "CONDITIONING", "STRING", "STRING", "IMAGE", "IMAGE", any_type, "CLIP")
+    RETURN_NAMES = ("positive", "negative", "prompt", "prompt_list", "image_1", "image_2", "queue", "clip")
+    OUTPUT_IS_LIST = (False, False, False, True, False, False, False, False)
     FUNCTION = "run"
     CATEGORY = "artfat/llm"
     OUTPUT_NODE = True
@@ -194,18 +217,61 @@ class ArtfatLLMPrompter:
 
     # --- main ----------------------------------------------------------------
 
+    @classmethod
+    def VALIDATE_INPUTS(cls, **kwargs):
+        # Accept anything; run() coerces each value to a safe default. This keeps a
+        # node saved under an older widget layout running instead of hard-erroring.
+        return True
+
     def run(self, model, mmproj, chat_handler, n_ctx, vram_limit, n_cpu_moe, llm_enabled,
             system_preset, system_prompt, instruction_preset, instruction, user_preset,
             negative, prefix, suffix, mode, max_tokens, temperature, seed, force_offload,
-            reasoning, top_k, top_p, min_p, typical_p, repeat_penalty, frequency_penalty,
+            top_k, top_p, min_p, typical_p, repeat_penalty, frequency_penalty,
             mirostat_mode, mirostat_tau, mirostat_eta, type_k, type_v, max_size,
             image_min_tokens, image_max_tokens,
             image_1=None, image_2=None, clip=None, queue=None, unique_id=None):
 
+        # --- sanitize every widget value (tolerate stale / shifted saved values) ---
+        n_ctx = int(_num(n_ctx, 8192, 1024, cast=int))
+        vram_limit = int(_num(vram_limit, -1, -1, cast=int))
+        n_cpu_moe = int(_num(n_cpu_moe, 0, 0, cast=int))
+        max_tokens = int(_num(max_tokens, 512, 16, 8192, cast=int))
+        temperature = _num(temperature, 0.6, 0.0, 2.0)
+        seed = int(_num(seed, 0, -1, cast=int))
+        top_k = int(_num(top_k, 40, 0, cast=int))
+        top_p = _num(top_p, 0.9, 0.0, 1.0)
+        min_p = _num(min_p, 0.05, 0.0, 1.0)
+        typical_p = _num(typical_p, 1.0, 0.0, 1.0)
+        repeat_penalty = _num(repeat_penalty, 1.05, 0.0, 10.0)
+        frequency_penalty = _num(frequency_penalty, 0.0, 0.0, 2.0)
+        mirostat_mode = int(_num(mirostat_mode, 0, 0, 2, cast=int))
+        mirostat_tau = _num(mirostat_tau, 5.0, 0.0, 10.0)
+        mirostat_eta = _num(mirostat_eta, 0.1, 0.0, 1.0)
+        max_size = int(_num(max_size, 512, 128, cast=int))
+        image_min_tokens = int(_num(image_min_tokens, 0, 0, cast=int))
+        image_max_tokens = int(_num(image_max_tokens, 0, 0, cast=int))
+        if type_k not in ("f16", "q8_0", "q4_0"):
+            type_k = "f16"
+        if type_v not in ("f16", "q8_0", "q4_0"):
+            type_v = "f16"
+        if mode not in ("composite", "batch"):
+            mode = "composite"
+        if chat_handler not in CHAT_HANDLERS:
+            chat_handler = "None"
+        if instruction_preset not in INSTRUCTION_PRESETS:
+            instruction_preset = "Custom"
+        system_preset = str(system_preset or "Custom")
+        system_prompt = str(system_prompt or "")
+        instruction = str(instruction or "")
+        user_preset = str(user_preset or "")
+        negative = str(negative or "")
+        prefix = str(prefix or "")
+        suffix = str(suffix or "")
+
         sys_text, user_text = self._resolve_text(
             system_preset, system_prompt, instruction_preset, instruction, user_preset)
         frames = self._collect_frames(image_1, image_2)
-        keep_think = reasoning == "on"
+        keep_think = False  # reasoning is always stripped from the prompt output
 
         def finalize(p):
             p = _clean(p, keep_think) if llm_enabled else p.strip()
@@ -267,7 +333,7 @@ class ArtfatLLMPrompter:
 
         gc.collect()
         result = (positive, negative_cond, main_prompt, prompts,
-                  image_1, image_2, queue)
+                  image_1, image_2, queue, clip)
         return {"ui": {"text": [main_prompt]}, "result": result}
 
 

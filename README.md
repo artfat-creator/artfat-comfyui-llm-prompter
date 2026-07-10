@@ -33,6 +33,18 @@ CLIP Text Encode nodes needed.
 - Reasoning-model support (`<think>` blocks stripped by default).
 - Progress bar for batch runs; image pass-through outputs; optional `queue` chain input.
 
+## Also a plain CLIP Text Encode (no learning curve)
+
+New to this and just want a prompt box? Turn **`⚡ LLM enabled` off**. The node skips the
+model and the `instruction` box becomes your **positive prompt** — it even relabels itself to
+`▶ POSITIVE PROMPT — type it here`. `negative` is your negative prompt, and with `clip`
+connected the `positive` / `negative` outputs are ready-to-use CONDITIONING — exactly like the
+CLIP Text Encode you already know. Nothing to learn: just type in the box.
+
+Prefer feeding the prompt from an external node? Right-click the node →
+**Convert instruction to input** (and/or `negative`) and wire any text / note node into it.
+Both ways work — type in the box, or drive it from outside, whatever you're used to.
+
 ## Install
 
 ```bash
@@ -78,7 +90,8 @@ System-prompt presets are plain `.txt` files in `ComfyUI/models/LLM/prompts/`.
 ## Outputs
 
 `positive` (CONDITIONING) · `negative` (CONDITIONING) · `prompt` (STRING) ·
-`prompt_list` (STRING list, for batch) · `image_1` / `image_2` (pass-through) · `queue`
+`prompt_list` (STRING list, for batch) · `image_1` / `image_2` (pass-through) · `queue` ·
+`clip` (pass-through, so a bypassed node still routes CLIP downstream)
 
 ## Seed & caching
 
