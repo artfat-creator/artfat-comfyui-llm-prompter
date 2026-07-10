@@ -46,6 +46,8 @@ model and the `instruction` box becomes your **positive prompt** — it even rel
 connected the `positive` / `negative` outputs are ready-to-use CONDITIONING — exactly like the
 CLIP Text Encode you already know. Nothing to learn: just type in the box.
 
+![With the LLM off, the instruction box becomes a positive prompt field](img/clip_mode.png)
+
 Prefer feeding the prompt from an external node? Right-click the node →
 **Convert instruction to input** (and/or `negative`) and wire any text / note node into it.
 Both ways work — type in the box, or drive it from outside, whatever you're used to.
@@ -110,10 +112,12 @@ System-prompt presets are plain `.txt` files in `ComfyUI/models/LLM/prompts/`.
 
 ## Inputs
 
-The essentials are always visible; the sampler / KV-cache / image-token knobs live behind the
-collapsible **▸ advanced** section (shown expanded below).
+The essentials stay visible; the sampler / KV-cache / image-token knobs tuck behind the
+collapsible **▸ advanced** section — compact by default, everything on demand.
 
-![The node with the advanced section expanded](img/node.png)
+![Compact by default, advanced collapsed](img/node_collapsed.png)
+
+![Advanced expanded — full sampler and image controls](img/node.png)
 
 | Input | What it does |
 |---|---|
