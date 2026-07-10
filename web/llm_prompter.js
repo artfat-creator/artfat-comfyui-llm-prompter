@@ -63,6 +63,8 @@ app.registerExtension({
             const node = this;
             node._advOpen = false;
 
+            // Read-only mirror of the final prompt. Appended LAST and NOT serialized, so it can
+            // never shift the saved widget values. (No real widget is ever reordered.)
             const disp = ComfyWidgets["STRING"](
                 node, "final_prompt", ["STRING", { multiline: true }], app
             ).widget;
@@ -72,13 +74,12 @@ app.registerExtension({
                 disp.inputEl.placeholder = "final prompt appears here after Queue";
             }
             disp.serialize = false;
+            disp.serializeValue = () => undefined;
             node._disp = disp;
 
             const en = widget(node, "llm_enabled");
             if (en) en.label = "⚡ LLM enabled";
 
-            // The instruction box announces its role: task for the LLM when enabled,
-            // or a plain positive-prompt box (CLIP Text Encode style) when disabled.
             const instr = widget(node, "instruction");
             const updateInstrHint = () => {
                 if (!instr || !instr.inputEl) return;
@@ -90,26 +91,23 @@ app.registerExtension({
             };
             if (en) {
                 const oc = en.callback;
-                en.callback = (v) => {
-                    if (oc) oc.call(en, v);
-                    updateInstrHint();
-                };
+                en.callback = (v) => { if (oc) oc.call(en, v); updateInstrHint(); };
             }
             updateInstrHint();
 
-            // Field heights via computeSize (litegraph reserves the space, no overlap):
-            // main prompt in + final prompt out = 2x, the other text boxes = 1.5x.
-            const setH = (w, h) => { if (w) w.computeSize = (width) => [width || 220, h]; };
-            setH(widget(node, "system_prompt"), 105);
-            setH(instr, 140);
-            setH(widget(node, "user_preset"), 105);
-            setH(widget(node, "negative"), 105);
-            setH(disp, 140);
+            const prefix = widget(node, "prefix");
+            if (prefix) prefix.label = "prefix: trigger word";
+            const suffix = widget(node, "suffix");
+            if (suffix) suffix.label = "suffix: quality tags";
 
-            const pfx = widget(node, "prefix");
-            if (pfx) pfx.label = "prefix: trigger word";
-            const sfx = widget(node, "suffix");
-            if (sfx) sfx.label = "suffix: quality tags";
+            // Advanced toggle — appended LAST (after final_prompt), so no hidden widget is ever
+            // the terminal widget and nothing dangles.
+            const btn = node.addWidget("button", "▸ advanced", null, () => {
+                node._advOpen = !node._advOpen;
+                btn.name = (node._advOpen ? "▾" : "▸") + " advanced";
+                relayout();
+            });
+            btn.serialize = false;
 
             const relayout = () => {
                 for (const n of ADVANCED) {
@@ -120,30 +118,6 @@ app.registerExtension({
                 node.setSize([Math.max(node.size[0], sz[0]), sz[1]]);
                 node.setDirtyCanvas(true, true);
             };
-
-            const btn = node.addWidget("button", "▸ advanced", null, () => {
-                node._advOpen = !node._advOpen;
-                btn.name = (node._advOpen ? "▾" : "▸") + " advanced";
-                relayout();
-            });
-
-            // Position ONLY the non-serialized helpers (disp, btn). Real widgets keep
-            // their INPUT_TYPES order, so saved values never shift.
-            // The advanced button is placed LAST so no hidden widget is ever the
-            // terminal widget (which litegraph renders as a stray hanging row).
-            const advSet = new Set(ADVANCED);
-            const reals = node.widgets.filter((w) => w !== disp && w !== btn);
-            const head = [];
-            const adv = [];
-            for (const w of reals) {
-                if (advSet.has(w.name)) {
-                    adv.push(w);
-                    continue;
-                }
-                head.push(w);
-                if (w.name === "negative") head.push(disp);
-            }
-            node.widgets = [...head, ...adv, btn];
 
             bindAutofill(node, "system_preset", "system_prompt", "/artfat_llm/system_preset");
             bindAutofill(node, "instruction_preset", "instruction", "/artfat_llm/instruction_preset");
