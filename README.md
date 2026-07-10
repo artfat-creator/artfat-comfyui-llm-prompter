@@ -80,8 +80,20 @@ does not auto-select it.
 ## Models
 
 Put GGUF files in `ComfyUI/models/LLM/`. For image input (VLM) also download the matching
-`mmproj` weights into the same folder and pick the correct `chat_handler`
-(e.g. `Qwen3.5`, `Qwen3-VL`, `MiniCPM-v4.5`).
+`mmproj-*.gguf` from the same repo into that folder, and pick the `chat_handler` that matches the
+model family.
+
+### Recommended models
+
+| Model (GGUF) | `chat_handler` | Notes |
+|---|---|---|
+| [DavidAU Qwen3.5-9B — Claude-4.6 HERETIC Thinking](https://huggingface.co/DavidAU/Qwen3.5-9B-Claude-4.6-OS-Auto-Variable-HERETIC-UNCENSORED-THINKING-MAX-NEOCODE-Imatrix-GGUF) | `Qwen3.5-Thinking` | vision (mmproj), uncensored, reasons then answers — the node strips the reasoning so only the prompt reaches CLIP |
+| [Qwen3-VL-8B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF) · [4B](https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF) | `Qwen3-VL` | official vision-language, lighter / faster |
+| [unsloth Qwen3.5-9B](https://huggingface.co/unsloth/Qwen3.5-9B-GGUF) | `Qwen3.5` | general Qwen3.5 build |
+
+Any VLM whose family is in the `chat_handler` dropdown works — MiniCPM-V, GLM-4.x-V, Gemma 3,
+LLaVA, and more. For a `-Thinking` handler the model reasons before answering and the node keeps
+only the final prompt.
 
 System-prompt presets are plain `.txt` files in `ComfyUI/models/LLM/prompts/`.
 
