@@ -9,6 +9,8 @@ CLIP Text Encode nodes needed.
 (image_1 / image_2 / text) --> LLM --> prompt --> CLIP --> CONDITIONING
 ```
 
+![Artfat LLM Prompter node](img/node.png)
+
 ## Why one node
 
 - **Resident model** — the GGUF is loaded once and kept in VRAM. Repeat runs are fast;
@@ -105,6 +107,19 @@ System-prompt presets are plain `.txt` files in `ComfyUI/models/LLM/prompts/`.
 Keep `force_offload` **off** to keep the LLM resident (fast repeat prompting). Turn it **on**
 only on low-VRAM systems to free VRAM for diffusion — the trade-off is a model reload on the
 next LLM call. The node also frees the LLM when ComfyUI unloads all models.
+
+## Power tips
+
+- **Any field can become an input.** Right-click the node → *Convert … to input* (or just drag a
+  wire onto the widget) for `system_prompt`, `instruction`, `user_preset`, `negative`, `prefix`,
+  `suffix`, or even numeric fields like `seed` — then drive them from external text / primitive nodes.
+- **Let the model think, keep the output clean.** Pick a `-Thinking` chat handler (e.g.
+  `Qwen3.5-Thinking`) for better prompts; the node always strips the reasoning so only the final
+  prompt reaches CLIP.
+- **Batch a dataset.** Set `mode = batch`, feed a batch of images into `image_1`, and read
+  `prompt_list` — one caption per image, ready for LoRA training.
+- **Share VRAM with diffusion.** On tight VRAM turn `force_offload` on (frees the LLM after each run)
+  and/or raise `n_cpu_moe` on MoE models. Keep `force_offload` off for instant repeat prompting.
 
 ## Credits
 
