@@ -136,10 +136,9 @@ collapsible **▸ advanced** section — compact by default, everything on deman
 | `negative` | Negative prompt → negative output |
 | `prefix` / `suffix` | Wrap the final prompt (trigger words, quality tags) |
 | `mode` | `composite` (images → one prompt) or `batch` (each image → its caption) |
-| `max_tokens` / `temperature` / `seed` | Generation length / creativity / seed |
+| `seed` | Prompt seed — a fixed seed reuses the cached prompt; `control_after_generate = randomize` for a fresh one each queue |
 | `force_offload` | Unload the LLM after running (frees VRAM; next call reloads) |
-| `reasoning` | `off`/`auto` strip `<think>` blocks, `on` keep them |
-| advanced | `top_k`, `top_p`, `min_p`, `typical_p`, `repeat_penalty`, `frequency_penalty`, `mirostat_*`, `type_k`/`type_v` (KV quant), `max_size`, `image_min/max_tokens` |
+| advanced | `max_tokens`, `temperature`, `top_k`, `top_p`, `min_p`, `typical_p`, `repeat_penalty`, `frequency_penalty`, `mirostat_*`, `type_k`/`type_v` (KV quant), `max_size`, `image_min/max_tokens` |
 | `image_1` / `image_2` / `clip` / `queue` | optional |
 
 ## Outputs
