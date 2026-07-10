@@ -224,6 +224,25 @@ class ArtfatLLMPrompter:
         # node saved under an older widget layout running instead of hard-erroring.
         return True
 
+    @classmethod
+    def IS_CHANGED(cls, **kwargs):
+        # Deterministic hash of every input so ComfyUI caches the node when nothing changed.
+        # With a fixed seed and unchanged inputs the hash is identical -> the node is skipped and
+        # the previous prompt/conditioning flows straight to the sampler (no LLM re-run).
+        import hashlib
+        h = hashlib.sha256()
+        for name in sorted(kwargs):
+            v = kwargs[name]
+            if v is not None and hasattr(v, "cpu") and hasattr(v, "numpy"):
+                try:
+                    h.update(name.encode())
+                    h.update(v.cpu().numpy().tobytes())
+                    continue
+                except Exception:
+                    pass
+            h.update(f"{name}={v!r}".encode("utf-8", "ignore"))
+        return h.hexdigest()
+
     def run(self, model, mmproj, chat_handler, n_ctx, vram_limit, n_cpu_moe, llm_enabled,
             system_preset, system_prompt, instruction_preset, instruction, user_preset,
             negative, prefix, suffix, mode, max_tokens, temperature, seed, force_offload,
