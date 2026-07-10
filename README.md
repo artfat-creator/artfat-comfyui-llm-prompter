@@ -46,7 +46,10 @@ model and the `instruction` box becomes your **positive prompt** — it even rel
 connected the `positive` / `negative` outputs are ready-to-use CONDITIONING — exactly like the
 CLIP Text Encode you already know. Nothing to learn: just type in the box.
 
-![With the LLM off, the instruction box becomes a positive prompt field](img/clip_mode.png)
+![Turn LLM off, then type your prompt in the instruction box — a plain CLIP Text Encode](img/clip_mode.png)
+
+*Toggle `⚡ LLM enabled` off, then write your prompt straight into the instruction box — the node
+encodes it to `positive` / `negative` just like a CLIP Text Encode.*
 
 Prefer feeding the prompt from an external node? Right-click the node →
 **Convert instruction to input** (and/or `negative`) and wire any text / note node into it.
