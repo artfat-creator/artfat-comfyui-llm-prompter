@@ -1,0 +1,293 @@
+"""Artfat LLM Prompter — one all-in-one LLM/VLM prompt node for ComfyUI.
+
+Flow:  (image_1 / image_2 / text) -> LLM -> prompt -> CLIP -> CONDITIONING
+
+Highlights:
+  * resident llama.cpp model (no reload between runs) with optional force_offload
+  * dual reference images, composite or batch (dataset captioning) modes
+  * .txt system presets + task/instruction presets (auto-filled, editable live)
+  * built-in CLIP Text Encode: with llm_enabled off it just encodes raw instruction
+  * cache-correct: no random IS_CHANGED, so a fixed seed reuses the cached result
+"""
+
+import base64
+import gc
+import io
+import os
+import random
+import re
+
+import numpy as np
+import torch
+from PIL import Image
+
+import comfy.model_management as mm
+import folder_paths
+
+from .llama_core import LLMEngine, CHAT_HANDLERS
+from .presets import (
+    INSTRUCTION_PRESETS,
+    INSTRUCTION_NAMES,
+    list_system_presets,
+    load_system_preset,
+)
+from .support.cqdm import cqdm
+
+if "LLM" not in folder_paths.folder_names_and_paths:
+    folder_paths.folder_names_and_paths["LLM"] = (
+        [os.path.join(folder_paths.models_dir, "LLM")],
+        {".gguf", ".bin", ".safetensors"},
+    )
+
+
+class AnyType(str):
+    def __ne__(self, other):
+        return False
+
+
+any_type = AnyType("*")
+
+_THINK_RE = re.compile(r"<think(?:ing)?>.*?</think(?:ing)?>", re.S | re.I)
+
+
+def _clean(text, keep_think):
+    if not keep_think:
+        text = _THINK_RE.sub("", text)
+    text = text.strip()
+    text = text.removeprefix("```json").removeprefix("```")
+    text = text.removesuffix("```")
+    return text.strip()
+
+
+def _tensor_to_b64(frame, max_size=None):
+    arr = np.clip(255.0 * frame.cpu().numpy(), 0, 255).astype(np.uint8)
+    pil = Image.fromarray(arr)
+    if max_size:
+        w, h = pil.size
+        scale = min(max_size / max(w, h), 1.0)
+        if scale < 1.0:
+            pil = pil.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
+    buf = io.BytesIO()
+    pil.save(buf, format="JPEG", quality=90)
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+
+def _image_item(b64):
+    return {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
+
+
+def _encode(clip, text):
+    if clip is None:
+        return None
+    tokens = clip.tokenize(text or "")
+    return clip.encode_from_tokens_scheduled(tokens)
+
+
+class ArtfatLLMPrompter:
+    @classmethod
+    def INPUT_TYPES(cls):
+        llms = folder_paths.get_filename_list("LLM") if "LLM" in folder_paths.folder_names_and_paths else []
+        models = [f for f in llms if "mmproj" not in f.lower()] or ["<put GGUF in models/LLM>"]
+        mmprojs = ["None"] + [f for f in llms if "mmproj" in f.lower()]
+        sys_presets = list_system_presets()
+        return {
+            "required": {
+                "model": (models,),
+                "mmproj": (mmprojs, {"default": "None"}),
+                "chat_handler": (CHAT_HANDLERS, {"default": "None"}),
+                "n_ctx": ("INT", {"default": 8192, "min": 1024, "max": 327680, "step": 128}),
+                "vram_limit": ("INT", {"default": -1, "min": -1, "max": 1024, "step": 1,
+                                       "tooltip": "VRAM budget in GB for the LLM (-1 = put all layers on GPU)."}),
+                "n_cpu_moe": ("INT", {"default": 0, "min": 0, "max": 999, "step": 1,
+                                      "tooltip": "Keep the MoE experts of the first N layers on CPU (frees VRAM on MoE models)."}),
+                "llm_enabled": ("BOOLEAN", {"default": True,
+                                            "tooltip": "OFF = skip the LLM and encode the instruction text as a plain CLIP Text Encode."}),
+                "system_preset": (sys_presets, {"default": "Custom"}),
+                "system_prompt": ("STRING", {"default": "", "multiline": True,
+                                             "placeholder": "system prompt (auto-filled from preset, editable)"}),
+                "instruction_preset": (INSTRUCTION_NAMES, {"default": "Describe -> prompt"}),
+                "instruction": ("STRING", {"default": "", "multiline": True,
+                                           "placeholder": "task / instruction (auto-filled from preset, editable)"}),
+                "user_preset": ("STRING", {"default": "", "multiline": True,
+                                           "placeholder": "extra ad-hoc instructions, appended (not saved to a file)"}),
+                "negative": ("STRING", {"default": "", "multiline": True,
+                                        "placeholder": "negative prompt (encoded to the negative output)"}),
+                "prefix": ("STRING", {"default": "", "multiline": False,
+                                      "placeholder": "prepended to the final prompt (e.g. LoRA trigger word)"}),
+                "suffix": ("STRING", {"default": "", "multiline": False}),
+                "mode": (["composite", "batch"], {"default": "composite",
+                         "tooltip": "composite: all images -> one prompt.  batch: each image -> its own caption (dataset)."}),
+                "max_tokens": ("INT", {"default": 512, "min": 16, "max": 8192, "step": 16}),
+                "temperature": ("FLOAT", {"default": 0.6, "min": 0.0, "max": 2.0, "step": 0.01}),
+                "seed": ("INT", {"default": 0, "min": -1, "max": 0xffffffffffffffff, "step": 1,
+                                 "tooltip": "Fixed seed reuses the cached prompt. -1 = random each call. Use control_after_generate=randomize for a fresh prompt every queue."}),
+                "force_offload": ("BOOLEAN", {"default": False,
+                                              "tooltip": "Unload the LLM from VRAM after running (frees VRAM for diffusion; next LLM call reloads)."}),
+                "reasoning": (["auto", "on", "off"], {"default": "off",
+                              "tooltip": "off/auto = strip <think> blocks from the output. on = keep them."}),
+                # --- advanced (collapsed by web/llm_prompter.js) ---
+                "top_k": ("INT", {"default": 40, "min": 0, "max": 1000, "step": 1}),
+                "top_p": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "min_p": ("FLOAT", {"default": 0.05, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "typical_p": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "repeat_penalty": ("FLOAT", {"default": 1.05, "min": 0.0, "max": 10.0, "step": 0.01}),
+                "frequency_penalty": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 2.0, "step": 0.01}),
+                "mirostat_mode": ("INT", {"default": 0, "min": 0, "max": 2, "step": 1}),
+                "mirostat_tau": ("FLOAT", {"default": 5.0, "min": 0.0, "max": 10.0, "step": 0.01}),
+                "mirostat_eta": ("FLOAT", {"default": 0.1, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "type_k": (["f16", "q8_0", "q4_0"], {"default": "f16"}),
+                "type_v": (["f16", "q8_0", "q4_0"], {"default": "f16"}),
+                "max_size": ("INT", {"default": 512, "min": 128, "max": 4096, "step": 64,
+                                     "tooltip": "Downscale reference images to this max side before encoding (batch/multi-image)."}),
+                "image_min_tokens": ("INT", {"default": 0, "min": 0, "max": 4096, "step": 32}),
+                "image_max_tokens": ("INT", {"default": 0, "min": 0, "max": 4096, "step": 32}),
+            },
+            "optional": {
+                "image_1": ("IMAGE",),
+                "image_2": ("IMAGE",),
+                "clip": ("CLIP",),
+                "queue": (any_type, {"tooltip": "Optional chain input to force execution order between prompter nodes."}),
+            },
+            "hidden": {"unique_id": "UNIQUE_ID"},
+        }
+
+    RETURN_TYPES = ("CONDITIONING", "CONDITIONING", "STRING", "STRING", "IMAGE", "IMAGE", any_type)
+    RETURN_NAMES = ("positive", "negative", "prompt", "prompt_list", "image_1", "image_2", "queue")
+    OUTPUT_IS_LIST = (False, False, False, True, False, False, False)
+    FUNCTION = "run"
+    CATEGORY = "artfat/llm"
+    OUTPUT_NODE = True
+
+    # --- helpers -------------------------------------------------------------
+
+    def _collect_frames(self, image_1, image_2):
+        frames = []
+        for img in (image_1, image_2):
+            if img is not None:
+                for i in range(img.shape[0]):
+                    frames.append(img[i])
+        return frames
+
+    def _resolve_text(self, system_preset, system_prompt, instruction_preset, instruction, user_preset):
+        sys_text = system_prompt.strip()
+        if not sys_text and system_preset not in ("Custom", "None", ""):
+            sys_text = load_system_preset(system_preset) or ""
+        instr = instruction.strip()
+        if not instr and instruction_preset != "Custom":
+            instr = INSTRUCTION_PRESETS.get(instruction_preset, "")
+        parts = [p for p in (instr, user_preset.strip()) if p]
+        user_text = "\n\n".join(parts)
+        return sys_text, user_text
+
+    def _sampler(self, max_tokens, temperature, top_k, top_p, min_p, typical_p,
+                 repeat_penalty, frequency_penalty, mirostat_mode, mirostat_tau, mirostat_eta):
+        return dict(
+            max_tokens=max_tokens, temperature=temperature, top_k=top_k, top_p=top_p,
+            min_p=min_p, typical_p=typical_p, repeat_penalty=repeat_penalty,
+            frequency_penalty=frequency_penalty, mirostat_mode=mirostat_mode,
+            mirostat_tau=mirostat_tau, mirostat_eta=mirostat_eta,
+        )
+
+    def _gen(self, messages, run_seed, sampler):
+        out = LLMEngine.llm.create_chat_completion(messages=messages, seed=run_seed, **sampler)
+        return out["choices"][0]["message"]["content"].removeprefix(": ").lstrip()
+
+    # --- main ----------------------------------------------------------------
+
+    def run(self, model, mmproj, chat_handler, n_ctx, vram_limit, n_cpu_moe, llm_enabled,
+            system_preset, system_prompt, instruction_preset, instruction, user_preset,
+            negative, prefix, suffix, mode, max_tokens, temperature, seed, force_offload,
+            reasoning, top_k, top_p, min_p, typical_p, repeat_penalty, frequency_penalty,
+            mirostat_mode, mirostat_tau, mirostat_eta, type_k, type_v, max_size,
+            image_min_tokens, image_max_tokens,
+            image_1=None, image_2=None, clip=None, queue=None, unique_id=None):
+
+        sys_text, user_text = self._resolve_text(
+            system_preset, system_prompt, instruction_preset, instruction, user_preset)
+        frames = self._collect_frames(image_1, image_2)
+        keep_think = reasoning == "on"
+
+        def finalize(p):
+            p = _clean(p, keep_think) if llm_enabled else p.strip()
+            return f"{prefix}{p}{suffix}" if (prefix or suffix) else p
+
+        prompts = []
+
+        if not llm_enabled:
+            # Plain CLIP Text Encode: encode the instruction text verbatim.
+            prompts = [finalize(user_text)]
+        else:
+            config = {
+                "model": model, "mmproj": mmproj, "chat_handler": chat_handler,
+                "n_ctx": n_ctx, "vram_limit": vram_limit, "n_cpu_moe": n_cpu_moe,
+                "type_k": type_k, "type_v": type_v,
+                "image_min_tokens": image_min_tokens, "image_max_tokens": image_max_tokens,
+            }
+            LLMEngine.ensure_loaded(config)
+
+            if frames and (not hasattr(LLMEngine.chat_handler, "clip_model_path")
+                           or LLMEngine.chat_handler.clip_model_path is None):
+                raise ValueError("Images are connected but the loaded model has no mmproj (vision) module.")
+
+            run_seed = seed if seed >= 0 else random.randint(0, 2 ** 31 - 1)
+            sampler = self._sampler(max_tokens, temperature, top_k, top_p, min_p, typical_p,
+                                    repeat_penalty, frequency_penalty, mirostat_mode,
+                                    mirostat_tau, mirostat_eta)
+
+            base_msgs = []
+            if sys_text:
+                base_msgs.append({"role": "system", "content": sys_text})
+
+            if not frames:
+                msgs = base_msgs + [{"role": "user", "content": user_text}]
+                prompts = [finalize(self._gen(msgs, run_seed, sampler))]
+            elif mode == "batch":
+                print(f"[llm-prompter] Batch captioning {len(frames)} image(s)")
+                for frame in cqdm(frames):
+                    if mm.processing_interrupted():
+                        raise mm.InterruptProcessingException()
+                    content = [{"type": "text", "text": user_text},
+                               _image_item(_tensor_to_b64(frame, max_size))]
+                    msgs = base_msgs + [{"role": "user", "content": content}]
+                    prompts.append(finalize(self._gen(msgs, run_seed, sampler)))
+            else:  # composite
+                content = [{"type": "text", "text": user_text}]
+                for frame in frames:
+                    content.append(_image_item(_tensor_to_b64(frame, max_size)))
+                msgs = base_msgs + [{"role": "user", "content": content}]
+                prompts = [finalize(self._gen(msgs, run_seed, sampler))]
+
+            LLMEngine.reset_context(chat_handler)
+            if force_offload:
+                LLMEngine.unload()
+
+        main_prompt = "\n\n".join(prompts) if mode == "batch" and len(prompts) > 1 else (prompts[0] if prompts else "")
+        positive = _encode(clip, main_prompt)
+        negative_cond = _encode(clip, negative)
+
+        gc.collect()
+        result = (positive, negative_cond, main_prompt, prompts,
+                  image_1, image_2, queue)
+        return {"ui": {"text": [main_prompt]}, "result": result}
+
+
+NODE_CLASS_MAPPINGS = {"ArtfatLLMPrompter": ArtfatLLMPrompter}
+NODE_DISPLAY_NAME_MAPPINGS = {"ArtfatLLMPrompter": "Artfat LLM Prompter"}
+
+
+# --- server routes: serve preset text to the web UI for live auto-fill --------
+try:
+    from server import PromptServer
+    from aiohttp import web
+
+    @PromptServer.instance.routes.get("/artfat_llm/system_preset")
+    async def _sys_preset(request):
+        name = request.query.get("name", "")
+        return web.json_response({"text": load_system_preset(name) or ""})
+
+    @PromptServer.instance.routes.get("/artfat_llm/instruction_preset")
+    async def _instr_preset(request):
+        name = request.query.get("name", "")
+        return web.json_response({"text": INSTRUCTION_PRESETS.get(name, "")})
+except Exception as e:
+    print(f"[llm-prompter] Preset routes not registered: {e}")

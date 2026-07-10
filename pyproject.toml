@@ -1,0 +1,23 @@
+[project]
+name = "comfyui-llm-prompter"
+description = "All-in-one LLM/VLM prompt engine for ComfyUI: one node turns reference images (or text) into a generation prompt via a resident llama.cpp model, then encodes it straight to CONDITIONING. Presets, dual-image compositing, batch captioning, built-in CLIP Text Encode fallback, cache-correct."
+version = "0.1.0"
+license = { file = "LICENSE" }
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Graphics",
+]
+
+[project.urls]
+Repository = "https://github.com/artfat-creator/comfyui-llm-prompter"
+Issues = "https://github.com/artfat-creator/comfyui-llm-prompter/issues"
+
+[tool.comfy]
+PublisherId = "artfat-creator"
+DisplayName = "Artfat LLM Prompter"
+Icon = ""
