@@ -100,14 +100,8 @@ app.registerExtension({
             const suffix = widget(node, "suffix");
             if (suffix) suffix.label = "suffix: quality tags";
 
-            // Field heights via computeSize (safe — no reorder, not serialized):
-            // main prompt in + final prompt out = 2x, the other text boxes = 1.5x.
-            const setH = (w, h) => { if (w) w.computeSize = (width) => [width || 220, h]; };
-            setH(widget(node, "system_prompt"), 105);
-            setH(instr, 140);
-            setH(widget(node, "user_preset"), 105);
-            setH(widget(node, "negative"), 105);
-            setH(disp, 140);
+            // No forced widget heights — they fight ComfyUI's native multiline layout and cause
+            // the boxes to drift/jitter. Native sizing is stable; drag the node corner to enlarge.
 
             // Advanced toggle — appended LAST (after final_prompt), so no hidden widget is ever
             // the terminal widget and nothing dangles.
