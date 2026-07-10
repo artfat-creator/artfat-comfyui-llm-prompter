@@ -65,6 +65,11 @@ The node feeds both images to the model (`image_1` → "Image 1", `image_2` → 
 generated prompt keeps Image 2's setting with Image 1's subject. Short, concrete instructions that
 name the images explicitly work best.
 
+> **Two-image compositing depends on the model.** It needs a VLM that accepts *multiple* images —
+> the **Qwen-VL / Qwen3.5** family and **MiniCPM-V** handle it well. Single-image models (LLaVA,
+> Moondream) effectively see only one. If the second image seems ignored, switch to a multi-image
+> model. Single-image captioning works on any VLM.
+
 ## Install
 
 ```bash
@@ -82,6 +87,11 @@ does not auto-select it.
 Put GGUF files in `ComfyUI/models/LLM/`. For image input (VLM) also download the matching
 `mmproj-*.gguf` from the same repo into that folder, and pick the `chat_handler` that matches the
 model family.
+
+> **For image input you need a vision model (VLM) — not a plain text LLM.** Look for **“VL”,
+> “Vision”, or “multimodal”** in the model name and an **`mmproj-*.gguf`** file in the repo — that
+> projector is what lets the model see the image. Without it the model is text-only (still fine for
+> rewriting/expanding a text prompt, just no image understanding).
 
 ### Recommended models
 
