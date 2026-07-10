@@ -51,8 +51,8 @@ Both ways work — type in the box, or drive it from outside, whatever you're us
 
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/artfat-creator/comfyui-llm-prompter.git
-python -m pip install -r comfyui-llm-prompter/requirements.txt
+git clone https://github.com/artfat-creator/artfat-comfyui-llm-prompter.git
+python -m pip install -r artfat-comfyui-llm-prompter/requirements.txt
 ```
 
 `requirements.txt` pins the [JamePeng llama-cpp-python](https://github.com/JamePeng/llama-cpp-python)

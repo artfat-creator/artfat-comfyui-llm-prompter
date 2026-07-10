@@ -14,8 +14,8 @@ classifiers = [
 ]
 
 [project.urls]
-Repository = "https://github.com/artfat-creator/comfyui-llm-prompter"
-Issues = "https://github.com/artfat-creator/comfyui-llm-prompter/issues"
+Repository = "https://github.com/artfat-creator/artfat-comfyui-llm-prompter"
+Issues = "https://github.com/artfat-creator/artfat-comfyui-llm-prompter/issues"
 
 [tool.comfy]
 PublisherId = "artfat-creator"
