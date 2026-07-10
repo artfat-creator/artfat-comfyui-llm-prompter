@@ -179,7 +179,8 @@ class ArtfatLLMPrompter:
     OUTPUT_IS_LIST = (False, False, False, True, False, False, False, False)
     FUNCTION = "run"
     CATEGORY = "artfat/llm"
-    OUTPUT_NODE = True
+    # NOT an OUTPUT_NODE: that would force re-execution every queue and defeat caching.
+    # The final-prompt UI still updates via the {"ui": {"text": ...}} return whenever the node runs.
 
     # --- helpers -------------------------------------------------------------
 
