@@ -13,6 +13,7 @@ Highlights:
 import base64
 import gc
 import io
+import json
 import os
 import random
 import re
@@ -38,6 +39,53 @@ if "LLM" not in folder_paths.folder_names_and_paths:
         [os.path.join(folder_paths.models_dir, "LLM")],
         {".gguf", ".bin", ".safetensors"},
     )
+
+
+# --- remember last-used SETTINGS so a freshly-dragged node inherits them ------------------
+# Only technical settings (model/handler/sampler/…), NEVER prompt content (instruction,
+# final_prompt, negative, seed, prefix/suffix). Written on every run, read in INPUT_TYPES.
+_SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "last_settings.json")
+_REMEMBER = (
+    "model", "mmproj", "chat_handler", "n_ctx", "vram_limit", "n_cpu_moe", "llm_enabled",
+    "system_preset", "instruction_preset", "mode", "force_offload",
+    "max_tokens", "temperature", "top_k", "top_p", "min_p", "typical_p", "repeat_penalty",
+    "frequency_penalty", "mirostat_mode", "mirostat_tau", "mirostat_eta", "type_k", "type_v",
+    "max_size", "image_min_tokens", "image_max_tokens",
+)
+
+
+def _load_last_settings():
+    try:
+        with open(_SETTINGS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
+def _save_last_settings(values):
+    try:
+        data = {k: values[k] for k in _REMEMBER if k in values}
+        with open(_SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception:
+        pass
+
+
+def _apply_saved_defaults(required, saved):
+    """Patch each remembered field's default from the saved settings. Combo fields are only
+    overridden if the saved value is still a valid choice (e.g. the model still exists)."""
+    for name, val in saved.items():
+        if name not in required:
+            continue
+        spec = required[name]
+        first = spec[0]
+        opts = dict(spec[1]) if len(spec) > 1 and isinstance(spec[1], dict) else {}
+        if isinstance(first, list):
+            if val not in first:
+                continue
+        opts["default"] = val
+        required[name] = (first, opts)
+    return required
 
 
 class AnyType(str):
@@ -112,7 +160,7 @@ class ArtfatLLMPrompter:
         models = [f for f in llms if "mmproj" not in f.lower()] or ["<put GGUF in models/LLM>"]
         mmprojs = ["None"] + [f for f in llms if "mmproj" in f.lower()]
         sys_presets = list_system_presets()
-        return {
+        types = {
             "required": {
                 "model": (models,),
                 "mmproj": (mmprojs, {"default": "None"}),
@@ -180,6 +228,9 @@ class ArtfatLLMPrompter:
             },
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
+        # A freshly-dragged node inherits the last-used settings (models, handler, sampler…).
+        _apply_saved_defaults(types["required"], _load_last_settings())
+        return types
 
     RETURN_TYPES = ("CONDITIONING", "CONDITIONING", "STRING", "STRING", "IMAGE", "IMAGE", any_type, "CLIP")
     RETURN_NAMES = ("positive", "negative", "prompt", "prompt_list", "image_1", "image_2", "queue", "clip")
@@ -301,6 +352,9 @@ class ArtfatLLMPrompter:
         freeze = bool(freeze)
         prefix = str(prefix or "")
         suffix = str(suffix or "")
+
+        # Remember the technical settings so the next freshly-dragged node inherits them.
+        _save_last_settings(locals())
 
         sys_text, user_text = self._resolve_text(
             system_preset, system_prompt, instruction_preset, instruction, user_preset)
