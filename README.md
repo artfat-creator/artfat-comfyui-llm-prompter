@@ -18,12 +18,18 @@ the café setting of Image 2.*
 
 - **Resident model** — the GGUF is loaded once and kept in VRAM. Repeat runs are fast;
   it only reloads when a load-relevant setting changes.
-- **Cache-correct** — no random `IS_CHANGED`. A fixed seed reuses the cached prompt, so
-  KSampler with the same seed does **not** regenerate. Change something → only that recomputes.
-- **Built-in CLIP Text Encode** — turn `llm_enabled` off and the node just encodes the
-  instruction text as a plain positive/negative CONDITIONING.
+- **Editable `final_prompt`** — the generated prompt lands in an editable, copyable box under
+  `negative`. Tweak it by hand, or (with the LLM off) type your own prompt there — that text is
+  what gets encoded to CLIP.
+- **Freeze with a `fixed` seed** — set `control_after_generate = fixed` and, once a prompt is in
+  `final_prompt`, the node reuses it verbatim straight into the sampler: **the LLM is not called
+  and the model is not even loaded**. Switch to `randomize` (or clear the box) to generate a fresh
+  one. Iterate on the image at zero LLM cost.
+- **Built-in CLIP Text Encode** — turn `llm_enabled` off and the node just encodes your
+  `final_prompt` text as plain positive/negative CONDITIONING.
 - **Low-VRAM friendly** — `vram_limit`, `n_cpu_moe` (MoE expert offload), KV-cache
-  quantization and an optional `force_offload` to free VRAM for diffusion.
+  quantization, an optional `force_offload`, and it **frees the diffusion model from VRAM before
+  loading the LLM** so llama.cpp doesn't spill to shared system RAM (much faster on 12 GB cards).
 
 ## Features
 
@@ -33,26 +39,32 @@ the café setting of Image 2.*
   (Describe / Tags / Cinematic / Replace subject / Appearance only / …). Both auto-fill an
   editable box so you see and can tweak the text live.
 - A free `user_preset` field for ad-hoc instructions (not written to any file).
-- `prefix` / `suffix` — e.g. auto-prepend a LoRA trigger word before CLIP encode.
+- Editable **`final_prompt`** box — the LLM writes its result there (copy or hand-edit it); with the
+  LLM off it becomes your manual prompt box. A `fixed` seed **freezes** it (reuse, no LLM run, no
+  model load); `randomize` regenerates.
+- `prefix` / `suffix` — e.g. auto-prepend a LoRA trigger word before CLIP encode (applied in both
+  LLM-on and LLM-off modes).
 - Positive **and** negative CONDITIONING outputs.
 - Reasoning-model support (`<think>` blocks stripped by default).
 - Progress bar for batch runs; image pass-through outputs; optional `queue` chain input.
 
 ## Also a plain CLIP Text Encode (no learning curve)
 
-New to this and just want a prompt box? Turn **`⚡ LLM enabled` off**. The node skips the
-model and the `instruction` box becomes your **positive prompt** — it even relabels itself to
-`▶ POSITIVE PROMPT — type it here`. `negative` is your negative prompt, and with `clip`
-connected the `positive` / `negative` outputs are ready-to-use CONDITIONING — exactly like the
-CLIP Text Encode you already know. Nothing to learn: just type in the box.
+New to this and just want a prompt box? Turn **`⚡ LLM enabled` off**. The node skips the model and
+encodes **only your `final_prompt`** to CLIP — type your positive prompt straight into that box, put
+your negative in `negative`, and with `clip` connected the `positive` / `negative` outputs are
+ready-to-use CONDITIONING, exactly like the CLIP Text Encode you already know.
 
-![Turn LLM off, then type your prompt in the instruction box — a plain CLIP Text Encode](img/clip_mode.png)
+With the LLM off, the LLM-only fields (`system_prompt`, `instruction`, `user_preset`) grey out and
+are ignored — they never leak into your prompt. `prefix` / `suffix` still apply if set.
 
-*Toggle `⚡ LLM enabled` off, then write your prompt straight into the instruction box — the node
-encodes it to `positive` / `negative` just like a CLIP Text Encode.*
+![Turn the LLM off, then type your prompt straight into the final_prompt box — a plain CLIP Text Encode](img/clip_mode.png)
+
+*Toggle `⚡ LLM enabled` off, then write your prompt into `final_prompt` — the node encodes it to
+`positive` / `negative` just like a CLIP Text Encode.*
 
 Prefer feeding the prompt from an external node? Right-click the node →
-**Convert instruction to input** (and/or `negative`) and wire any text / note node into it.
+**Convert final_prompt to input** (and/or `negative`) and wire any text / note node into it.
 Both ways work — type in the box, or drive it from outside, whatever you're used to.
 
 ## Example: compose across two images
@@ -129,14 +141,15 @@ collapsible **▸ advanced** section — compact by default, everything on deman
 | `n_ctx` | Context length (default 8192) |
 | `vram_limit` | VRAM budget in GB for the LLM (-1 = all layers on GPU) |
 | `n_cpu_moe` | Keep MoE experts of the first N layers on CPU (frees VRAM) |
-| `llm_enabled` | Off = skip LLM, encode the instruction as plain CLIP Text Encode |
-| `system_preset` / `system_prompt` | Style/engine (.txt preset auto-fills the editable box) |
-| `instruction_preset` / `instruction` | Task / output format (preset auto-fills the box) |
-| `user_preset` | Extra ad-hoc instructions, appended |
+| `llm_enabled` | Off = skip the LLM and encode **only** `final_prompt` (the LLM-only fields below grey out and are ignored) |
+| `system_preset` / `system_prompt` | Style/engine (.txt preset auto-fills the editable box) — LLM only |
+| `instruction_preset` / `instruction` | Task / output format (preset auto-fills the box) — LLM only |
+| `user_preset` | Extra ad-hoc instructions, appended — LLM only |
 | `negative` | Negative prompt → negative output |
-| `prefix` / `suffix` | Wrap the final prompt (trigger words, quality tags) |
+| `final_prompt` | The generated prompt (editable, copyable). **LLM on:** the model writes its result here. **LLM off:** type your own prompt here — it's what gets encoded to CLIP |
+| `prefix` / `suffix` | Wrap the final prompt (trigger words, quality tags) — applied in both LLM on and off |
 | `mode` | `composite` (images → one prompt) or `batch` (each image → its caption) |
-| `seed` | Prompt seed — a fixed seed reuses the cached prompt; `control_after_generate = randomize` for a fresh one each queue |
+| `seed` | Prompt seed. **`control_after_generate = fixed`** freezes `final_prompt` (reuse it, no LLM run, no model load); **`randomize`** generates a fresh prompt each queue |
 | `force_offload` | Unload the LLM after running (frees VRAM; next call reloads) |
 | advanced | `max_tokens`, `temperature`, `top_k`, `top_p`, `min_p`, `typical_p`, `repeat_penalty`, `frequency_penalty`, `mirostat_*`, `type_k`/`type_v` (KV quant), `max_size`, `image_min/max_tokens` |
 | `image_1` / `image_2` / `clip` / `queue` | optional |
@@ -147,18 +160,29 @@ collapsible **▸ advanced** section — compact by default, everything on deman
 `prompt_list` (STRING list, for batch) · `image_1` / `image_2` (pass-through) · `queue` ·
 `clip` (pass-through, so a bypassed node still routes CLIP downstream)
 
-## Seed & caching
+## Seed = freeze / regenerate
 
-- **Fixed seed** → same input signature → ComfyUI returns the cached prompt, the LLM does
-  not even run, and a downstream KSampler with the same seed serves its cached image.
-- **`control_after_generate = randomize`** on the seed → a fresh prompt each queue.
-- Seed only varies output when `temperature > 0`.
+The seed's `control_after_generate` is the switch between **reusing** and **regenerating** the prompt:
+
+- **`fixed`** + a prompt already in `final_prompt` → the node **reuses it verbatim** straight to
+  CLIP → the sampler. The LLM is **not called** and the model is **not loaded**, so you can re-run
+  the sampler (or tweak other nodes) at zero LLM cost. Hand-edit `final_prompt` and your edit is
+  what's used.
+- **`randomize`** / `increment` / `decrement`, **or an empty** `final_prompt` → the LLM runs and
+  writes a fresh prompt into the box.
+- Seed only varies the *generated* text when `temperature > 0`.
+
+> How it knows: `control_after_generate` is a front-end setting the Python side can't read directly,
+> so the node's web script mirrors "is it `fixed`?" into a hidden `freeze` flag at queue time — no
+> seed guessing, no one-run lag.
 
 ## VRAM / offload
 
 Keep `force_offload` **off** to keep the LLM resident (fast repeat prompting). Turn it **on**
 only on low-VRAM systems to free VRAM for diffusion — the trade-off is a model reload on the
-next LLM call. The node also frees the LLM when ComfyUI unloads all models.
+next LLM call. The node also frees the LLM when ComfyUI unloads all models, **and evicts the
+diffusion model from VRAM before loading the LLM** — otherwise llama.cpp's GPU layers spill into
+shared system RAM and load/inference crawl (the sampler reloads the diffusion model on its next run).
 
 ### By VRAM (LLM running next to a diffusion model)
 
@@ -175,8 +199,8 @@ keep it resident and enjoy near-instant prompts.
 ## Power tips
 
 - **Any field can become an input.** Right-click the node → *Convert … to input* (or just drag a
-  wire onto the widget) for `system_prompt`, `instruction`, `user_preset`, `negative`, `prefix`,
-  `suffix`, or even numeric fields like `seed` — then drive them from external text / primitive nodes.
+  wire onto the widget) for `final_prompt`, `system_prompt`, `instruction`, `user_preset`, `negative`,
+  `prefix`, `suffix`, or even numeric fields like `seed` — then drive them from external text / primitive nodes.
 - **Let the model think, keep the output clean.** Pick a `-Thinking` chat handler (e.g.
   `Qwen3.5-Thinking`) for better prompts; the node always strips the reasoning so only the final
   prompt reaches CLIP.
