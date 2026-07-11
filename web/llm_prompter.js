@@ -1,5 +1,4 @@
 import { app } from "../../scripts/app.js";
-import { ComfyWidgets } from "../../scripts/widgets.js";
 
 const ADVANCED = [
     "max_tokens", "temperature",
@@ -57,50 +56,70 @@ app.registerExtension({
     async beforeRegisterNodeDef(nodeType, nodeData) {
         if (nodeData.name !== "ArtfatLLMPrompter") return;
 
+        // NOTE: final_prompt is now a real Python INPUT_TYPES field (see nodes.py). It lives in
+        // the frozen Python widget order, so it can never shift the positional widgets_values
+        // list — the drift bug is impossible by construction. This file no longer creates,
+        // moves, or serialize-flags any widget; it only tweaks labels/heights and writes the
+        // LLM result back into the existing final_prompt field on execution.
+
         const onCreated = nodeType.prototype.onNodeCreated;
         nodeType.prototype.onNodeCreated = function () {
             onCreated && onCreated.apply(this, arguments);
             const node = this;
             node._advOpen = false;
 
-            // final_prompt display — appended AFTER every real widget and NEVER moved. Because it
-            // sits after all real widgets, even if it were serialized it cannot shift any real
-            // value. When 'advanced' is collapsed, the advanced block above it hides, so it
-            // visually appears right under 'negative'.
-            const disp = ComfyWidgets["STRING"](
-                node, "final_prompt", ["STRING", { multiline: true }], app
-            ).widget;
-            if (disp.inputEl) {
-                disp.inputEl.readOnly = true;
-                disp.inputEl.style.opacity = "0.85";
-                disp.inputEl.placeholder = "final prompt appears here after Queue";
-            }
-            disp.serialize = false;
-            disp.serializeValue = () => undefined;
-            node._disp = disp;
-
             const en = widget(node, "llm_enabled");
             if (en) en.label = "⚡ LLM enabled";
 
+            // Hidden `freeze` flag -> backend. It mirrors the seed's control_after_generate == "fixed".
+            // control_after_generate.value is the user's real, STABLE choice (the seed itself changes
+            // on randomize, so it is not a reliable signal). serializeValue recomputes at Queue time,
+            // so the backend always gets the current fixed/not-fixed state with no one-run lag.
+            const freezeW = widget(node, "freeze");
+            if (freezeW) {
+                hide(freezeW);
+                freezeW.serializeValue = () => {
+                    const c = widget(node, "control_after_generate");
+                    return !!(c && String(c.value).toLowerCase() === "fixed");
+                };
+            }
+
             const instr = widget(node, "instruction");
-            const updateInstrHint = () => {
-                if (!instr || !instr.inputEl) return;
+            // LLM-only text fields: inert (greyed + non-editable) while the LLM is off, because in
+            // that mode ONLY final_prompt is encoded (see nodes.py). Prevents typing into fields that
+            // do nothing and makes it visually obvious they are disabled.
+            const LLM_ONLY = ["system_prompt", "instruction", "user_preset"];
+            const refreshEnabled = () => {
                 const off = en && en.value === false;
-                instr.inputEl.placeholder = off
-                    ? "▶ POSITIVE PROMPT — type it here (LLM off = plain CLIP Text Encode)"
-                    : "task / instruction for the LLM (auto-filled from preset, editable)";
+                if (instr && instr.inputEl) {
+                    instr.inputEl.placeholder = off
+                        ? "task for the LLM (ignored while LLM is off — type your prompt in 'final prompt' below)"
+                        : "task / instruction for the LLM (auto-filled from preset, editable)";
+                }
+                for (const nm of LLM_ONLY) {
+                    const w = widget(node, nm);
+                    if (w && w.inputEl) {
+                        w.inputEl.disabled = off;
+                        w.inputEl.style.opacity = off ? "0.4" : "";
+                    }
+                }
                 node.setDirtyCanvas(true, true);
             };
             if (en) {
                 const oc = en.callback;
-                en.callback = (v) => { if (oc) oc.call(en, v); updateInstrHint(); };
+                en.callback = (v) => { if (oc) oc.call(en, v); refreshEnabled(); };
             }
-            updateInstrHint();
+            // inputEl exists only after the DOM widgets mount — refresh now and shortly after.
+            refreshEnabled();
+            setTimeout(refreshEnabled, 30);
 
             const prefix = widget(node, "prefix");
             if (prefix) prefix.label = "prefix: trigger word";
             const suffix = widget(node, "suffix");
             if (suffix) suffix.label = "suffix: quality tags";
+
+            const fp = widget(node, "final_prompt");
+            if (fp) fp.label = "final prompt (LLM output / manual input)";
 
             // Field heights: main prompt in + final prompt out = 2x, other text boxes = 1.5x.
             const setH = (w, h) => { if (w) w.computeSize = (width) => [width || 220, h]; };
@@ -108,7 +127,7 @@ app.registerExtension({
             setH(instr, 140);
             setH(widget(node, "user_preset"), 105);
             setH(widget(node, "negative"), 105);
-            setH(disp, 140);
+            setH(fp, 140);
 
             // Advanced toggle — appended LAST.
             const btn = node.addWidget("button", "▸ advanced", null, () => {
@@ -131,24 +150,18 @@ app.registerExtension({
             bindAutofill(node, "system_preset", "system_prompt", "/artfat_llm/system_preset");
             bindAutofill(node, "instruction_preset", "instruction", "/artfat_llm/instruction_preset");
 
-            // Place final_prompt directly under 'negative' (as requested). ONLY this display
-            // widget moves; it is serialize=false, so real widgets keep their INPUT_TYPES order
-            // and saved values never shift. Deterministic on every load -> consistent, no drift.
-            const di = node.widgets.indexOf(disp);
-            if (di > -1) node.widgets.splice(di, 1);
-            const ni = node.widgets.findIndex((w) => w.name === "negative");
-            node.widgets.splice(ni > -1 ? ni + 1 : node.widgets.length, 0, disp);
-
             setTimeout(relayout, 20);
         };
 
+        // Write the generated prompt back into the (real, Python) final_prompt field.
         const onExecuted = nodeType.prototype.onExecuted;
         nodeType.prototype.onExecuted = function (message) {
             onExecuted && onExecuted.apply(this, arguments);
             if (!message || !message.text) return;
             const text = Array.isArray(message.text) ? message.text.join("\n\n") : message.text;
-            if (this._disp) {
-                this._disp.value = text;
+            const w = widget(this, "final_prompt");
+            if (w) {
+                w.value = text;
                 this.setDirtyCanvas(true, true);
             }
         };

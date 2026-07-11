@@ -146,6 +146,9 @@ class ArtfatLLMPrompter:
                                            "placeholder": "extra ad-hoc instructions, appended (not saved to a file)"}),
                 "negative": ("STRING", {"default": "", "multiline": True,
                                         "placeholder": "negative prompt (encoded to the negative output)"}),
+                "final_prompt": ("STRING", {"default": "", "multiline": True,
+                                            "placeholder": "LLM writes the generated prompt here (editable, copyable). With LLM off, type your prompt here — it is encoded to CLIP (falls back to 'instruction' if left empty).",
+                                            "tooltip": "OUTPUT when LLM is on: the generated prompt appears here, editable and copyable. INPUT when LLM is off: this text is encoded directly to CLIP."}),
                 # --- advanced (collapsed by web/llm_prompter.js) ---
                 "max_tokens": ("INT", {"default": 512, "min": 16, "max": 8192, "step": 16}),
                 "temperature": ("FLOAT", {"default": 0.6, "min": 0.0, "max": 2.0, "step": 0.01}),
@@ -164,6 +167,10 @@ class ArtfatLLMPrompter:
                                      "tooltip": "Downscale reference images to this max side before encoding (batch/multi-image)."}),
                 "image_min_tokens": ("INT", {"default": 0, "min": 0, "max": 4096, "step": 32}),
                 "image_max_tokens": ("INT", {"default": 0, "min": 0, "max": 4096, "step": 32}),
+                # Hidden flag driven by web/llm_prompter.js: True only when the seed's
+                # control_after_generate == "fixed". Placed at the END of INPUT_TYPES so adding it
+                # does NOT shift any existing saved node's positional widget values (no re-add needed).
+                "freeze": ("BOOLEAN", {"default": False}),
             },
             "optional": {
                 "image_1": ("IMAGE",),
@@ -231,6 +238,11 @@ class ArtfatLLMPrompter:
         # the previous prompt/conditioning flows straight to the sampler (no LLM re-run).
         import hashlib
         h = hashlib.sha256()
+        # Hash every input. A changed seed (control_after_generate=randomize/increment) changes the
+        # hash -> the node re-executes and run() regenerates. An unchanged seed (fixed) with unchanged
+        # inputs keeps the hash stable -> ComfyUI caches and the prompt flows to the sampler with no
+        # model work. final_prompt stays in the hash so a manual edit re-encodes; run()'s frozen
+        # branch prevents any regenerate-on-its-own-output loop.
         for name in sorted(kwargs):
             v = kwargs[name]
             if v is not None and hasattr(v, "cpu") and hasattr(v, "numpy"):
@@ -245,10 +257,10 @@ class ArtfatLLMPrompter:
 
     def run(self, model, mmproj, chat_handler, n_ctx, vram_limit, n_cpu_moe, llm_enabled,
             system_preset, system_prompt, instruction_preset, instruction, user_preset,
-            negative, prefix, suffix, mode, max_tokens, temperature, seed, force_offload,
+            negative, final_prompt, prefix, suffix, mode, max_tokens, temperature, seed, force_offload,
             top_k, top_p, min_p, typical_p, repeat_penalty, frequency_penalty,
             mirostat_mode, mirostat_tau, mirostat_eta, type_k, type_v, max_size,
-            image_min_tokens, image_max_tokens,
+            image_min_tokens, image_max_tokens, freeze=False,
             image_1=None, image_2=None, clip=None, queue=None, unique_id=None):
 
         # --- sanitize every widget value (tolerate stale / shifted saved values) ---
@@ -285,6 +297,8 @@ class ArtfatLLMPrompter:
         instruction = str(instruction or "")
         user_preset = str(user_preset or "")
         negative = str(negative or "")
+        final_prompt = str(final_prompt or "")
+        freeze = bool(freeze)
         prefix = str(prefix or "")
         suffix = str(suffix or "")
 
@@ -297,11 +311,28 @@ class ArtfatLLMPrompter:
             p = _clean(p, keep_think) if llm_enabled else p.strip()
             return f"{prefix}{p}{suffix}" if (prefix or suffix) else p
 
+        # `freeze` is set by web/llm_prompter.js to True only when the seed's control_after_generate
+        # is "fixed" (a stable per-user choice, unlike the seed which changes on randomize). So:
+        # fixed + a prompt already in the field => reuse it, skip the LLM entirely. Empty field or
+        # control != fixed => fall through and (re)generate.
+        frozen = bool(llm_enabled and freeze and final_prompt.strip())
+
         prompts = []
 
         if not llm_enabled:
-            # Plain CLIP Text Encode: encode the instruction text verbatim.
-            prompts = [finalize(user_text)]
+            # LLM off: encode ONLY the final_prompt text. The LLM-only fields (instruction,
+            # user_preset, system_prompt, presets) are inert here and must NOT leak into the
+            # prompt. prefix/suffix still apply via finalize(). Empty final_prompt -> empty prompt.
+            prompts = [finalize(final_prompt.strip())]
+        elif frozen:
+            # FROZEN — fixed seed (unchanged since the last generation) + a prompt already in the
+            # field. Reuse it verbatim and skip the ENTIRE LLM path: no LLMEngine.ensure_loaded(), so
+            # the model is NOT loaded/reloaded even if force_offload unloaded it; no generation. The
+            # existing prompt goes straight to CLIP -> sampler. It already has prefix/suffix baked in,
+            # so it is encoded AS-IS. To regenerate: switch control_after_generate off "fixed"
+            # (randomize/increment), or clear the final_prompt field.
+            print("[llm-prompter] control_after_generate=fixed: reusing final_prompt, LLM not called, model untouched.")
+            prompts = [final_prompt.strip()]
         else:
             config = {
                 "model": model, "mmproj": mmproj, "chat_handler": chat_handler,

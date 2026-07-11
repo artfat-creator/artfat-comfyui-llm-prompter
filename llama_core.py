@@ -115,6 +115,16 @@ class LLMEngine:
     @classmethod
     def _load(cls, config):
         cls.unload()
+        # Evict ComfyUI's diffusion models from VRAM BEFORE llama.cpp allocates its GPU layers.
+        # llama.cpp allocates outside ComfyUI's torch pool, so if the diffusion model is still
+        # resident the LLM's layers spill into shared system RAM (Windows WDDM) and load + inference
+        # crawl. Freeing here gives llama.cpp clean VRAM; the sampler reloads the diffusion model on
+        # its next run (and the unload_all_models hook already frees the LLM in the other direction).
+        try:
+            mm.unload_all_models()
+            mm.soft_empty_cache()
+        except Exception:
+            pass
         cls.current_config = dict(config)
 
         model = config["model"]
