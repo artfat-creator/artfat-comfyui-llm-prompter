@@ -11,7 +11,16 @@ import os
 
 import folder_paths
 
-PROMPTS_DIR = os.path.join(folder_paths.models_dir, "LLM", "prompts")
+# System presets are read from TWO places, in this priority:
+#   1. USER_DIR  -> ComfyUI/models/LLM/prompts/   (user's own presets + live overrides)
+#   2. BUNDLED_DIR -> this node's own prompts/     (ships with the node via git, always present)
+# A .txt in USER_DIR overrides a bundled one of the same name, so users can tweak a preset
+# by dropping an edited copy into models/LLM/prompts/ without touching the node files.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+BUNDLED_DIR = os.path.join(_HERE, "prompts")
+USER_DIR = os.path.join(folder_paths.models_dir, "LLM", "prompts")
+# Kept for backward compatibility (older code/imports referenced PROMPTS_DIR).
+PROMPTS_DIR = USER_DIR
 
 # name -> instruction text ("Custom" leaves the box empty for a free / user preset)
 INSTRUCTION_PRESETS = {
@@ -67,27 +76,31 @@ INSTRUCTION_NAMES = list(INSTRUCTION_PRESETS.keys())
 
 
 def list_system_presets():
-    """Dropdown values: 'Custom' plus every .txt in models/LLM/prompts/."""
-    names = ["Custom"]
-    try:
-        if os.path.isdir(PROMPTS_DIR):
-            for fn in sorted(os.listdir(PROMPTS_DIR)):
-                if fn.lower().endswith(".txt"):
-                    names.append(fn)
-    except Exception as e:
-        print(f"[llm-prompter] Could not list system presets: {e}")
-    return names
+    """Dropdown values: 'Custom' plus every .txt from the bundled prompts/ and
+    models/LLM/prompts/ (deduped by filename, user dir wins, case-insensitive sort)."""
+    seen = set()
+    for d in (BUNDLED_DIR, USER_DIR):
+        try:
+            if os.path.isdir(d):
+                for fn in os.listdir(d):
+                    if fn.lower().endswith(".txt"):
+                        seen.add(fn)
+        except Exception as e:
+            print(f"[llm-prompter] Could not list system presets in {d}: {e}")
+    return ["Custom"] + sorted(seen, key=str.lower)
 
 
 def load_system_preset(name):
-    """Return the text of a .txt system preset, or None for 'Custom'/missing."""
+    """Return the text of a .txt system preset, or None for 'Custom'/missing.
+    Checks USER_DIR first (so a user copy overrides the bundled one), then BUNDLED_DIR."""
     if not name or name in ("Custom", "None"):
         return None
-    path = os.path.join(PROMPTS_DIR, name)
-    try:
-        if os.path.isfile(path):
-            with open(path, encoding="utf-8") as fh:
-                return fh.read()
-    except Exception as e:
-        print(f"[llm-prompter] Could not read preset {name}: {e}")
+    for d in (USER_DIR, BUNDLED_DIR):
+        path = os.path.join(d, name)
+        try:
+            if os.path.isfile(path):
+                with open(path, encoding="utf-8") as fh:
+                    return fh.read()
+        except Exception as e:
+            print(f"[llm-prompter] Could not read preset {name} from {d}: {e}")
     return None

@@ -35,7 +35,7 @@ the café setting of Image 2.*
 
 - Dual reference images (`image_1`, `image_2`) with **composite** (one prompt) or
   **batch** (one caption per image — dataset captioning) modes.
-- `.txt` **system presets** read from `models/LLM/prompts/` + **instruction presets**
+- `.txt` **system presets** bundled with the node (plus any you add in `models/LLM/prompts/`) + **instruction presets**
   (Describe / Tags / Cinematic / Replace subject / Appearance only / …). Both auto-fill an
   editable box so you see and can tweak the text live.
 - A free `user_preset` field for ad-hoc instructions (not written to any file).
@@ -123,7 +123,10 @@ Any VLM whose family is in the `chat_handler` dropdown works — MiniCPM-V, GLM-
 LLaVA, and more. For a `-Thinking` handler the model reasons before answering and the node keeps
 only the final prompt.
 
-System-prompt presets are plain `.txt` files in `ComfyUI/models/LLM/prompts/`.
+System-prompt presets are plain `.txt` files. A full set ships **with the node** (in its own
+`prompts/` folder) so they show up in the dropdown right after install — nothing to download.
+To add your own or tweak one, drop a `.txt` into `ComfyUI/models/LLM/prompts/`; a file there
+**overrides** a bundled preset of the same name, so your edits survive node updates.
 
 ## Inputs
 
