@@ -289,11 +289,19 @@ class ArtfatLLMPrompter:
         # the previous prompt/conditioning flows straight to the sampler (no LLM re-run).
         import hashlib
         h = hashlib.sha256()
-        # Hash every input. A changed seed (control_after_generate=randomize/increment) changes the
-        # hash -> the node re-executes and run() regenerates. An unchanged seed (fixed) with unchanged
-        # inputs keeps the hash stable -> ComfyUI caches and the prompt flows to the sampler with no
-        # model work. final_prompt stays in the hash so a manual edit re-encodes; run()'s frozen
-        # branch prevents any regenerate-on-its-own-output loop.
+        # LLM OFF: the node encodes ONLY final_prompt, so hash just the fields that affect that
+        # output. Skipping the reference-image tensors (a multi-MB .cpu()+sha256 per queue) and the
+        # LLM-only fields makes IS_CHANGED instant -> OFF mode goes straight to the sampler.
+        if not bool(kwargs.get("llm_enabled", True)):
+            h.update((f"off|fp={kwargs.get('final_prompt', '')!r}|neg={kwargs.get('negative', '')!r}"
+                      f"|pre={kwargs.get('prefix', '')!r}|suf={kwargs.get('suffix', '')!r}"
+                      f"|clip={kwargs.get('clip') is not None}").encode("utf-8", "ignore"))
+            return h.hexdigest()
+        # LLM ON: hash every input. A changed seed (control_after_generate=randomize/increment)
+        # changes the hash -> the node re-executes and run() regenerates. An unchanged seed (fixed)
+        # with unchanged inputs keeps the hash stable -> ComfyUI caches and the prompt flows to the
+        # sampler with no model work. final_prompt stays in the hash so a manual edit re-encodes;
+        # run()'s frozen branch prevents any regenerate-on-its-own-output loop.
         for name in sorted(kwargs):
             v = kwargs[name]
             if v is not None and hasattr(v, "cpu") and hasattr(v, "numpy"):
@@ -436,7 +444,10 @@ class ArtfatLLMPrompter:
         positive = _encode(clip, main_prompt)
         negative_cond = _encode(clip, negative)
 
-        gc.collect()
+        # Only collect after a real LLM run freed context/VRAM. In OFF / frozen mode nothing was
+        # allocated, so skip the (heap-walking, ~0.5-1s) GC to keep those paths instant.
+        if llm_enabled and not frozen:
+            gc.collect()
         result = (positive, negative_cond, main_prompt, prompts,
                   image_1, image_2, queue, clip)
         return {"ui": {"text": [main_prompt]}, "result": result}

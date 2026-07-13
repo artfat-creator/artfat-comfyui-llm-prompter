@@ -121,13 +121,42 @@ app.registerExtension({
             const fp = widget(node, "final_prompt");
             if (fp) fp.label = "final prompt (LLM output / manual input)";
 
-            // Field heights: main prompt in + final prompt out = 2x, other text boxes = 1.5x.
-            const setH = (w, h) => { if (w) w.computeSize = (width) => [width || 220, h]; };
-            setH(widget(node, "system_prompt"), 105);
-            setH(instr, 140);
-            setH(widget(node, "user_preset"), 105);
-            setH(widget(node, "negative"), 105);
-            setH(fp, 140);
+            // --- Elastic multiline heights (freely resizable BOTH ways, and no "jump") -----------
+            // All five text areas SHARE the node's free vertical space by weight, and each one's
+            // computeSize is derived from the LIVE node.size so that node.computeSize()[1] ALWAYS
+            // equals node.size[1]. Two consequences:
+            //   * No jump — ComfyUI resets node.size -> node.computeSize() on window focus / redraw;
+            //     since they are equal, that reset is a no-op no matter what event triggers it.
+            //   * Fully elastic — drag the node taller and the fields grow; drag it shorter and they
+            //     shrink down to MIN, so you can size the node to whatever you want (both directions).
+            // The recursion guard lets the nested node.computeSize() measure the NON-text widgets
+            // while the text areas report their MIN, so the split is exact (zero px drift).
+            // Knobs: WEIGHT = how the free space is split (final_prompt gets the most); MIN = the
+            // smallest each field may shrink to (also sets the node's minimum height).
+            const ML = ["system_prompt", "instruction", "user_preset", "negative", "final_prompt"];
+            const WEIGHT = { system_prompt: 1, instruction: 1, user_preset: 1, negative: 1, final_prompt: 4 };
+            const MIN = { system_prompt: 34, instruction: 34, user_preset: 34, negative: 34, final_prompt: 60 };
+            const SUMMIN = ML.reduce((a, n) => a + MIN[n], 0);
+            const SUMW = ML.reduce((a, n) => a + WEIGHT[n], 0);
+            let inCompute = false;
+            const mlSize = (w, width) => {
+                if (inCompute) return [width, MIN[w.name]];             // nested measure: report MIN
+                inCompute = true;
+                let total;
+                try { total = node.computeSize()[1]; } finally { inCompute = false; }
+                const nonML = total - SUMMIN;                          // everything except the text areas
+                const free = Math.max(0, (node.size ? node.size[1] : total) - nonML - SUMMIN);
+                return [width, MIN[w.name] + free * (WEIGHT[w.name] / SUMW)];
+            };
+            ML.forEach((nm) => { const w = widget(node, nm); if (w) w.computeSize = (width) => mlSize(w, width); });
+
+            // Spawn a freshly-dragged node at a comfortable height (final_prompt big by default). A node
+            // loaded from a saved workflow keeps its saved size — it is restored AFTER onNodeCreated,
+            // so this only affects new nodes; the user can still drag it to any size afterwards.
+            setTimeout(() => {
+                const want = 1000;
+                if (node.size[1] < want) node.setSize([node.size[0], want]);
+            }, 25);
 
             // Advanced toggle — appended LAST.
             const btn = node.addWidget("button", "▸ advanced", null, () => {
