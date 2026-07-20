@@ -114,6 +114,18 @@ python -m pip install -r artfat-comfyui-llm-prompter/requirements.txt
 Either way, **fully restart ComfyUI** afterwards (not just a browser refresh). The node appears
 as **Artfat LLM Prompter** — type `artfat` in the node search to find it.
 
+> **Close ComfyUI before running pip.** If it's running, files are locked and the numpy upgrade
+> can't finish cleanly — you'll see `WARNING: Failed to remove contents in a temporary directory
+> ...\~umpy.libs`. If that happens: close ComfyUI, delete the leftover **`~umpy`** and
+> **`~umpy.libs`** folders in `.venv\Lib\site-packages` (or `python_embeded\Lib\site-packages`),
+> then start it again. Installing `llama-cpp-python` may also **downgrade numpy** (e.g. 2.4 → 2.3) —
+> that's expected and fine for ComfyUI.
+
+> **Running several ComfyUI installs?** Comfy Desktop can create `ComfyUI (2)`, `ComfyUI (3)`… —
+> clone into the `custom_nodes` of the instance you **actually launch**, and install the
+> requirements with **that** instance's Python. Installing into a different copy is the most
+> common reason the node "doesn't show up".
+
 **Note:** `llama-cpp-python` is a hard dependency — without it the node **won't register at all**
 (it won't even show up in the menu). If the node is missing, that's the first thing to check.
 
