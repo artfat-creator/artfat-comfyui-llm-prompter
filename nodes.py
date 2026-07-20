@@ -219,6 +219,11 @@ class ArtfatLLMPrompter:
                 # control_after_generate == "fixed". Placed at the END of INPUT_TYPES so adding it
                 # does NOT shift any existing saved node's positional widget values (no re-add needed).
                 "freeze": ("BOOLEAN", {"default": False}),
+                # --- batch prompts (added at the END so no positional widget-value drift) ---
+                "batch_mode": ("BOOLEAN", {"default": False,
+                                           "tooltip": "ON: ignore the LLM and treat 'batch_prompts' as a list (one prompt per line). Wire the 'positive_list' output to KSampler.positive -> one image per line from a single Queue."}),
+                "batch_prompts": ("STRING", {"default": "", "multiline": True,
+                                             "placeholder": "batch mode: one prompt per line. blank lines skipped, lines starting with # are comments. prefix/suffix still apply to each."}),
             },
             "optional": {
                 "image_1": ("IMAGE",),
@@ -232,9 +237,10 @@ class ArtfatLLMPrompter:
         _apply_saved_defaults(types["required"], _load_last_settings())
         return types
 
-    RETURN_TYPES = ("CONDITIONING", "CONDITIONING", "STRING", "STRING", "IMAGE", "IMAGE", any_type, "CLIP")
-    RETURN_NAMES = ("positive", "negative", "prompt", "prompt_list", "image_1", "image_2", "queue", "clip")
-    OUTPUT_IS_LIST = (False, False, False, True, False, False, False, False)
+    RETURN_TYPES = ("CONDITIONING", "CONDITIONING", "STRING", "STRING", "IMAGE", "IMAGE", any_type, "CLIP", "CONDITIONING")
+    RETURN_NAMES = ("positive", "negative", "prompt", "prompt_list", "image_1", "image_2", "queue", "clip", "positive_list")
+    # positive_list (index 8) is a LIST: batch_mode -> one CONDITIONING per prompt line; else a 1-element list.
+    OUTPUT_IS_LIST = (False, False, False, True, False, False, False, False, True)
     FUNCTION = "run"
     CATEGORY = "artfat/llm"
     # NOT an OUTPUT_NODE: that would force re-execution every queue and defeat caching.
@@ -289,6 +295,13 @@ class ArtfatLLMPrompter:
         # the previous prompt/conditioning flows straight to the sampler (no LLM re-run).
         import hashlib
         h = hashlib.sha256()
+        # BATCH: hash only the fields that shape positive_list (skips the LLM path entirely, so
+        # image tensors / LLM fields don't affect the result). Re-runs when the list/wrappers change.
+        if bool(kwargs.get("batch_mode", False)):
+            h.update((f"batch|bp={kwargs.get('batch_prompts', '')!r}|neg={kwargs.get('negative', '')!r}"
+                      f"|pre={kwargs.get('prefix', '')!r}|suf={kwargs.get('suffix', '')!r}"
+                      f"|clip={kwargs.get('clip') is not None}").encode("utf-8", "ignore"))
+            return h.hexdigest()
         # LLM OFF: the node encodes ONLY final_prompt, so hash just the fields that affect that
         # output. Skipping the reference-image tensors (a multi-MB .cpu()+sha256 per queue) and the
         # LLM-only fields makes IS_CHANGED instant -> OFF mode goes straight to the sampler.
@@ -319,7 +332,7 @@ class ArtfatLLMPrompter:
             negative, final_prompt, prefix, suffix, mode, max_tokens, temperature, seed, force_offload,
             top_k, top_p, min_p, typical_p, repeat_penalty, frequency_penalty,
             mirostat_mode, mirostat_tau, mirostat_eta, type_k, type_v, max_size,
-            image_min_tokens, image_max_tokens, freeze=False,
+            image_min_tokens, image_max_tokens, freeze=False, batch_mode=False, batch_prompts="",
             image_1=None, image_2=None, clip=None, queue=None, unique_id=None):
 
         # --- sanitize every widget value (tolerate stale / shifted saved values) ---
@@ -360,9 +373,49 @@ class ArtfatLLMPrompter:
         freeze = bool(freeze)
         prefix = str(prefix or "")
         suffix = str(suffix or "")
+        batch_mode = bool(batch_mode)
+        batch_prompts = str(batch_prompts or "")
 
         # Remember the technical settings so the next freshly-dragged node inherits them.
         _save_last_settings(locals())
+
+        # --- BATCH MODE: one prompt per line -> one CONDITIONING each (skip the LLM) ---
+        # Wire the `positive_list` output to KSampler.positive: ComfyUI runs the graph once per
+        # list item, so a single Queue produces one image per line. prefix/suffix still wrap each.
+        if batch_mode and batch_prompts.strip():
+            # Split into prompts. A line STARTING with "N." ("1.", "4. text", "4.Prompt") is a numbered-list
+            # marker (the negative lookahead (?!\d) keeps decimals like "2.5"/"f2.8"/"5:30" intact).
+            # If markers are present -> split ON them: everything from one "N." to the next is ONE prompt
+            # (so a multi-line prompt stays whole), and any preamble BEFORE the first "N." (a description
+            # header) is dropped. If no markers -> fall back to one prompt per line. "#" lines are comments.
+            _mark = re.compile(r"^\s*\d+\.(?!\d)\s*")
+            raw = batch_prompts.splitlines()
+            marker_idx = [i for i, l in enumerate(raw) if _mark.match(l)]
+            lines = []
+            if marker_idx:
+                for j, start in enumerate(marker_idx):
+                    end = marker_idx[j + 1] if j + 1 < len(marker_idx) else len(raw)
+                    block = list(raw[start:end])
+                    block[0] = _mark.sub("", block[0], count=1)  # strip the leading "N." from block start
+                    txt = " ".join(l.strip() for l in block
+                                   if l.strip() and not l.strip().startswith("#")).strip()
+                    if txt:
+                        lines.append(txt)
+            else:
+                for ln in raw:
+                    ln = ln.strip()
+                    if ln and not ln.startswith("#"):
+                        lines.append(ln)
+            wrapped = [f"{prefix}{ln}{suffix}" if (prefix or suffix) else ln for ln in lines]
+            if not wrapped:
+                wrapped = [""]
+            print(f"[llm-prompter] batch_mode: {len(wrapped)} prompt(s) -> positive_list (LLM skipped)")
+            pos_list = [_encode(clip, t) for t in wrapped]
+            neg_cond = _encode(clip, negative)
+            main = wrapped[0]
+            result = (pos_list[0], neg_cond, main, wrapped,
+                      image_1, image_2, queue, clip, pos_list)
+            return {"ui": {"text": ["\n\n".join(wrapped)]}, "result": result}
 
         sys_text, user_text = self._resolve_text(
             system_preset, system_prompt, instruction_preset, instruction, user_preset)
@@ -449,7 +502,7 @@ class ArtfatLLMPrompter:
         if llm_enabled and not frozen:
             gc.collect()
         result = (positive, negative_cond, main_prompt, prompts,
-                  image_1, image_2, queue, clip)
+                  image_1, image_2, queue, clip, [positive])
         return {"ui": {"text": [main_prompt]}, "result": result}
 
 

@@ -199,12 +199,37 @@ collapsible **▸ advanced** section — compact by default, everything on deman
 | `force_offload` | Unload the LLM after running (frees VRAM; next call reloads) |
 | advanced | `max_tokens`, `temperature`, `top_k`, `top_p`, `min_p`, `typical_p`, `repeat_penalty`, `frequency_penalty`, `mirostat_*`, `type_k`/`type_v` (KV quant), `max_size`, `image_min/max_tokens` |
 | `image_1` / `image_2` / `clip` / `queue` | optional |
+| `batch_mode` / `batch_prompts` | Run a list of ready prompts instead of the LLM — see [Batch prompts](#batch-prompts) |
 
 ## Outputs
 
 `positive` (CONDITIONING) · `negative` (CONDITIONING) · `prompt` (STRING) ·
 `prompt_list` (STRING list, for batch) · `image_1` / `image_2` (pass-through) · `queue` ·
-`clip` (pass-through, so a bypassed node still routes CLIP downstream)
+`clip` (pass-through, so a bypassed node still routes CLIP downstream) ·
+`positive_list` (CONDITIONING list — one per prompt in batch mode)
+
+## Batch prompts
+
+Already have your prompts written? Paste them in and get one image per line from a
+**single Queue** — the LLM is skipped entirely.
+
+1. Turn **`batch_mode`** on.
+2. Paste your prompts into **`batch_prompts`**.
+3. Wire the **`positive_list`** output to `KSampler.positive` (keep `negative` wired from
+   the regular `negative` output).
+
+ComfyUI runs the graph once per list item, so ten prompts give you ten images.
+
+**Formatting.** Two accepted layouts, auto-detected:
+
+- **One prompt per line** — the default when no numbering is present.
+- **A numbered list** (`1.`, `2.`, …) — the text from one marker to the next is treated as
+  *one* prompt, so a prompt may span several lines. Anything before the first `1.` (a
+  header or description) is dropped. Decimals are safe: `f2.8`, `2.5`, `5:30` are never
+  mistaken for markers.
+
+Lines starting with `#` are comments, blank lines are skipped, and `prefix` / `suffix`
+still wrap every prompt — so a trigger word stays applied across the whole batch.
 
 ## Seed = freeze / regenerate
 
