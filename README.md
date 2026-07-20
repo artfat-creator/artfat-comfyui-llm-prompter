@@ -95,9 +95,21 @@ git clone https://github.com/artfat-creator/artfat-comfyui-llm-prompter.git
 python -m pip install -r artfat-comfyui-llm-prompter/requirements.txt
 ```
 
+Then **fully restart ComfyUI** (not just a browser refresh). The node appears as
+**Artfat LLM Prompter** — type `artfat` in the node search to find it.
+
 `requirements.txt` pins the [JamePeng llama-cpp-python](https://github.com/JamePeng/llama-cpp-python)
 build (ships the VLM chat handlers). Pick the wheel that matches your Python/OS if pip
 does not auto-select it.
+
+> ### Node is red after loading a workflow? / Manager says a node pack is missing
+> Some exported workflows carry a **stale pack id** (e.g. `comfyui-workflow-encrypt`) that
+> ComfyUI Manager can't resolve — it's a **metadata glitch, not a real package**, so
+> "Apply Changes" will never fix it and the node stays red no matter how many restarts.
+>
+> **Fix:** install this node **manually with the `git clone` above**, then fully restart ComfyUI.
+> If a node still looks broken after that, right-click it → **Fix node (recreate)**, or delete it
+> and add it again from the node menu.
 
 ## Models
 
