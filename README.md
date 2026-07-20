@@ -89,14 +89,33 @@ name the images explicitly work best.
 
 ## Install
 
+### A — you already have `llama-cpp-python` installed
+(e.g. from another LLM/VLM node pack). Just clone it — nothing else needed:
+
+```bash
+cd ComfyUI/custom_nodes
+git clone https://github.com/artfat-creator/artfat-comfyui-llm-prompter.git
+```
+
+### B — you don't have it yet
+Clone **and** install the requirements (this is what pulls in `llama-cpp-python`):
+
 ```bash
 cd ComfyUI/custom_nodes
 git clone https://github.com/artfat-creator/artfat-comfyui-llm-prompter.git
 python -m pip install -r artfat-comfyui-llm-prompter/requirements.txt
 ```
 
-Then **fully restart ComfyUI** (not just a browser refresh). The node appears as
-**Artfat LLM Prompter** — type `artfat` in the node search to find it.
+> ⚠️ **Use ComfyUI's own Python**, not the system one — otherwise the packages land in the
+> wrong environment and the node still won't load:
+> - **portable:** `..\..\python_embeded\python.exe -m pip install -r artfat-comfyui-llm-prompter\requirements.txt`
+> - **venv / pinokio:** use that environment's `python.exe` instead of plain `python`
+
+Either way, **fully restart ComfyUI** afterwards (not just a browser refresh). The node appears
+as **Artfat LLM Prompter** — type `artfat` in the node search to find it.
+
+**Note:** `llama-cpp-python` is a hard dependency — without it the node **won't register at all**
+(it won't even show up in the menu). If the node is missing, that's the first thing to check.
 
 `requirements.txt` pins the [JamePeng llama-cpp-python](https://github.com/JamePeng/llama-cpp-python)
 build (ships the VLM chat handlers). Pick the wheel that matches your Python/OS if pip
