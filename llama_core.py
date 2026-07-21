@@ -69,6 +69,24 @@ _try_add(["MiniCPM-v4.5", "MiniCPM-v4.5-Thinking"], "MiniCPMv45ChatHandler")
 _try_add(["MiniCPM-v4.6", "MiniCPM-v4.6-Thinking"], "MiniCPMv46ChatHandler")
 
 
+def _resolve_gguf_path(filename):
+    """Full path for a GGUF picked in the dropdown.
+
+    The dropdown merges two ComfyUI categories — "LLM" (models/LLM) and "clip"
+    (models/text_encoders) — and either may span several roots via extra_model_paths.yaml, so the
+    old hardcoded models_dir/LLM/<name> was only right by luck. Ask folder_paths where the file
+    actually is; fall back to the historical path if it can't resolve one.
+    """
+    for category in ("LLM", "clip"):
+        try:
+            full = folder_paths.get_full_path(category, filename)
+        except Exception:
+            full = None
+        if full and os.path.exists(full):
+            return full
+    return os.path.join(folder_paths.models_dir, "LLM", filename)
+
+
 class LLMEngine:
     """Process-wide singleton holding one resident llama.cpp model."""
 
@@ -142,7 +160,7 @@ class LLMEngine:
         if chat_handler_name not in _HANDLERS:
             raise ValueError(f'Unknown chat_handler: "{chat_handler_name}"')
 
-        model_path = os.path.join(folder_paths.models_dir, "LLM", model)
+        model_path = _resolve_gguf_path(model)
         n_gpu_layers = -1
 
         if vram_limit != -1:
@@ -151,7 +169,7 @@ class LLMEngine:
             layer_gb = gguf_gb / max(1, layers)
 
         if mmproj and mmproj != "None":
-            mmproj_path = os.path.join(folder_paths.models_dir, "LLM", mmproj)
+            mmproj_path = _resolve_gguf_path(mmproj)
             if chat_handler_name == "None":
                 raise ValueError('"chat_handler" cannot be None when an mmproj is set.')
 

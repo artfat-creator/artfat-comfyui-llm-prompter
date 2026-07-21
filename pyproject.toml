@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-llm-prompter"
 description = "All-in-one LLM/VLM prompt engine for ComfyUI: one node turns reference images (or text) into a generation prompt via a resident llama.cpp model, then encodes it straight to CONDITIONING. Presets, dual-image compositing, batch captioning, built-in CLIP Text Encode fallback, cache-correct."
-version = "0.2.0"
+version = "0.2.1"
 license = { file = "LICENSE" }
 readme = "README.md"
 requires-python = ">=3.10"

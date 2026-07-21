@@ -34,11 +34,24 @@ from .presets import (
 )
 from .support.cqdm import cqdm
 
+# Register models/LLM. `folder_names_and_paths` is a GLOBAL namespace shared by every installed
+# pack, so another node may have claimed the "LLM" key before us — ComfyUI-Florence2 does exactly
+# that at import time, and it loads first (custom_nodes are imported alphabetically). Its
+# add_model_folder_path() creates the key with an EMPTY extension set, and an empty set means
+# filter_files_extensions() lets EVERY file through — which is why .safetensors/.bin showed up in
+# the model dropdown. So: merge instead of skipping — add our path if missing and union in our
+# extensions. Purely additive; nothing another pack registered is removed.
+_LLM_DIR = os.path.join(folder_paths.models_dir, "LLM")
+_LLM_EXTS = {".gguf", ".bin", ".safetensors"}
 if "LLM" not in folder_paths.folder_names_and_paths:
-    folder_paths.folder_names_and_paths["LLM"] = (
-        [os.path.join(folder_paths.models_dir, "LLM")],
-        {".gguf", ".bin", ".safetensors"},
-    )
+    folder_paths.folder_names_and_paths["LLM"] = ([_LLM_DIR], set(_LLM_EXTS))
+else:
+    _paths, _exts = folder_paths.folder_names_and_paths["LLM"]
+    if _LLM_DIR not in _paths:
+        _paths.append(_LLM_DIR)
+    # An empty set is "allow everything"; only narrow it once we know who else contributed.
+    if _exts:
+        _exts.update(_LLM_EXTS)
 
 
 # --- remember last-used SETTINGS so a freshly-dragged node inherits them ------------------
@@ -156,9 +169,18 @@ def _num(v, default, lo=None, hi=None, cast=float):
 class ArtfatLLMPrompter:
     @classmethod
     def INPUT_TYPES(cls):
+        # GGUF only: the engine is llama-cpp-python, so a .safetensors/.bin pick could only ever
+        # fail with a generic "Failed to load model from file". Also scan "clip"
+        # (models/text_encoders) — GGUF vision/text encoders (Qwen2.5-VL / Qwen3-VL) conventionally
+        # live there because CLIP loaders need them too.
         llms = folder_paths.get_filename_list("LLM") if "LLM" in folder_paths.folder_names_and_paths else []
-        models = [f for f in llms if "mmproj" not in f.lower()] or ["<put GGUF in models/LLM>"]
-        mmprojs = ["None"] + [f for f in llms if "mmproj" in f.lower()]
+        try:
+            clips = folder_paths.get_filename_list("clip")
+        except Exception:
+            clips = []
+        ggufs = sorted({f for f in list(llms) + list(clips) if f.lower().endswith(".gguf")})
+        models = [f for f in ggufs if "mmproj" not in f.lower()] or ["<put GGUF in models/LLM or models/text_encoders>"]
+        mmprojs = ["None"] + [f for f in ggufs if "mmproj" in f.lower()]
         sys_presets = list_system_presets()
         types = {
             "required": {
