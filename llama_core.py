@@ -8,6 +8,7 @@ KV-cache quantization for low-VRAM / MoE setups.
 
 import gc
 import os
+import sys
 
 import folder_paths
 import comfy.model_management as mm
@@ -23,6 +24,103 @@ from llama_cpp.llama_chat_format import (
 )
 
 from .support.gguf_layers import get_layer_count
+
+# GPU status, checked once at import. NOTE: llama_cpp.llama_supports_gpu_offload() is
+# UNRELIABLE here — it returns False even on a working CUDA build (checked before backend
+# init), so we DON'T use it. Instead we check the actual ggml-cuda.dll: whether it exists
+# (CPU-only build if not), and whether its required CUDA major (from its cudart/cublas
+# import) matches torch's CUDA major — a mismatch (e.g. cu128 wheel on cu130 torch) means
+# ggml-cuda.dll can't load its runtime DLLs and silently falls back to CPU.
+_JAMEPENG_VER, _JAMEPENG_DATE = "0.3.44", "20260721"
+_CU_TAGS = {12: [124, 126, 128], 13: [130, 131]}
+
+
+def _ggml_cuda_major(dll_path):
+    """CUDA major ggml-cuda.dll needs (from its cudart64_X/cublas64_X import), or None."""
+    try:
+        import re
+        import struct
+        data = open(dll_path, "rb").read()
+        e_lfanew = struct.unpack_from("<I", data, 0x3C)[0]
+        coff = e_lfanew + 4
+        numsec = struct.unpack_from("<H", data, coff + 2)[0]
+        optsz = struct.unpack_from("<H", data, coff + 16)[0]
+        opt = coff + 20
+        is64 = struct.unpack_from("<H", data, opt)[0] == 0x20B
+        imp_rva = struct.unpack_from("<I", data, opt + (112 if is64 else 96) + 8)[0]
+        secs = []
+        sh = opt + optsz
+        for i in range(numsec):
+            o = sh + i * 40
+            secs.append((struct.unpack_from("<I", data, o + 12)[0],
+                         struct.unpack_from("<I", data, o + 16)[0],
+                         struct.unpack_from("<I", data, o + 20)[0]))
+
+        def rva2off(rva):
+            for va, rawsz, rawptr in secs:
+                if va <= rva < va + rawsz:
+                    return rawptr + (rva - va)
+            return None
+
+        off = rva2off(imp_rva)
+        while off:
+            name_rva = struct.unpack_from("<I", data, off + 12)[0]
+            if name_rva == 0:
+                break
+            no = rva2off(name_rva)
+            name = data[no:data.index(b"\0", no)].decode(errors="ignore")
+            m = re.match(r"(?:cublas|cudart)64_(\d+)\.dll", name, re.I)
+            if m:
+                return int(m.group(1))
+            off += 20
+    except Exception:
+        return None
+    return None
+
+
+def _gpu_status():
+    """('ok'|'cpu'|'mismatch'|'unknown', (need_major, torch_major))."""
+    try:
+        import llama_cpp
+        cuda_dll = os.path.join(os.path.dirname(llama_cpp.__file__), "lib", "ggml-cuda.dll")
+        if not os.path.exists(cuda_dll):
+            return "cpu", None
+        need = _ggml_cuda_major(cuda_dll)
+        try:
+            import torch
+            tc = getattr(torch.version, "cuda", None)
+            tmaj = int(tc.split(".")[0]) if tc else None
+        except Exception:
+            tmaj = None
+        if need is None or tmaj is None:
+            return "unknown", (need, tmaj)
+        return ("ok" if need == tmaj else "mismatch"), (need, tmaj)
+    except Exception:
+        return "unknown", None
+
+
+_GPU_STATUS, _GPU_DETAIL = _gpu_status()
+
+
+def _cuda_wheel_hint():
+    """Reinstall command for THIS Python + THIS torch CUDA version (mirrors install.py)."""
+    tag = f"cp{sys.version_info.major}{sys.version_info.minor}"
+    cu = 128
+    try:
+        import torch
+        tc = getattr(torch.version, "cuda", None)
+        if tc:
+            maj, mi = (int(x) for x in tc.split(".")[:2])
+            tags = _CU_TAGS.get(maj, [])
+            fitting = [t for t in tags if (t % 10) <= mi]
+            cu = fitting[-1] if fitting else (tags[0] if tags else 128)
+    except Exception:
+        pass
+    url = (f"https://github.com/JamePeng/llama-cpp-python/releases/download/"
+           f"v{_JAMEPENG_VER}-cu{cu}-win-{_JAMEPENG_DATE}/"
+           f"llama_cpp_python-{_JAMEPENG_VER}+cu{cu}-{tag}-{tag}-win_amd64.whl")
+    return sys.executable, url
+
 
 # Base handlers always present in the fork.
 CHAT_HANDLERS = [
@@ -198,6 +296,20 @@ class LLMEngine:
                 n_gpu_layers = max(1, int(vram_limit / layer_gb))
             cls.chat_handler = handler_cls(verbose=False) if handler_cls is not None else None
 
+        if n_gpu_layers != 0 and _GPU_STATUS in ("cpu", "mismatch"):
+            exe, url = _cuda_wheel_hint()
+            print("=" * 72)
+            if _GPU_STATUS == "mismatch":
+                need, tmaj = _GPU_DETAIL
+                print(f"[llm-prompter] WARNING: llama-cpp-python is built for CUDA {need}.x, but "
+                      f"your torch uses CUDA {tmaj}.x -> GPU offload FAILS (silent CPU fallback).")
+            else:
+                print("[llm-prompter] WARNING: llama-cpp-python is a CPU-ONLY build (no CUDA).")
+            print("[llm-prompter] The LLM will run on CPU (slow). To fix, FULLY CLOSE ComfyUI, then run:")
+            print(f'[llm-prompter]   "{exe}" -m pip install --force-reinstall --no-deps {url}')
+            print("[llm-prompter] (or re-run the node's install.py). Wheels: "
+                  "https://github.com/JamePeng/llama-cpp-python/releases")
+            print("=" * 72)
         print(f"[llm-prompter] Loading model: {model}  (n_gpu_layers={n_gpu_layers}, n_cpu_moe={n_cpu_moe})")
         cls.llm = Llama(
             model_path,

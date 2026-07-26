@@ -129,9 +129,8 @@ as **Artfat LLM Prompter** — type `artfat` in the node search to find it.
 **Note:** `llama-cpp-python` is a hard dependency — without it the node **won't register at all**
 (it won't even show up in the menu). If the node is missing, that's the first thing to check.
 
-`requirements.txt` pins the [JamePeng llama-cpp-python](https://github.com/JamePeng/llama-cpp-python)
-build (ships the VLM chat handlers). Pick the wheel that matches your Python/OS if pip
-does not auto-select it.
+`requirements.txt` installs a plain CPU `llama-cpp-python` so the node always loads. The
+**GPU (CUDA) build is set up automatically** — see [GPU acceleration](#gpu-acceleration-cuda) below.
 
 > ### Node is red after loading a workflow? / Manager says a node pack is missing
 > Some exported workflows carry a **stale pack id** (e.g. `comfyui-workflow-encrypt`) that
@@ -141,6 +140,36 @@ does not auto-select it.
 > **Fix:** install this node **manually with the `git clone` above**, then fully restart ComfyUI.
 > If a node still looks broken after that, right-click it → **Fix node (recreate)**, or delete it
 > and add it again from the node menu.
+
+## GPU acceleration (CUDA)
+
+The node runs the LLM on your **NVIDIA GPU** automatically. The catch `llama-cpp-python` has:
+its CUDA build must match your ComfyUI's **torch CUDA major** — a mismatched wheel (e.g. a
+CUDA 12.8 build on a CUDA 13 torch) loads but **silently falls back to CPU**, because
+`ggml-cuda.dll` links `cudart64_<major>.dll`, shipped by torch. The node handles this for you:
+
+- **`install.py`** — runs via ComfyUI-Manager after install (or run it by hand). It reads your
+  `torch.version.cuda` and installs the matching
+  [JamePeng](https://github.com/JamePeng/llama-cpp-python) wheel (cu124 / cu126 / cu128 / cu130 /
+  cu131) for your exact Python. **Windows + NVIDIA.**
+- **If the LLM still runs on CPU** (CPU-only build, or a CUDA mismatch after a ComfyUI update
+  bumped your torch CUDA), the node prints a clear warning at model-load time with the **exact
+  reinstall command for *your* torch CUDA version**.
+
+Run the installer manually (Windows portable example — **ComfyUI fully closed**, else the llama
+DLLs are locked):
+
+```
+..\..\python_embeded\python.exe install.py
+```
+
+**Verify it's on GPU:** load a model — the console should print `offloaded N/N layers to GPU`
+and VRAM usage rises. (`llama_supports_gpu_offload()` is unreliable and returns `False` even on a
+working build, so check the load log / VRAM, not that function.)
+
+**Non-NVIDIA / non-Windows:** the node still works on CPU (slower). macOS (Metal) and Linux users
+install a matching `llama-cpp-python` build manually from the
+[JamePeng releases](https://github.com/JamePeng/llama-cpp-python/releases).
 
 ## Models
 
@@ -279,6 +308,26 @@ keep it resident and enjoy near-instant prompts.
   `prompt_list` — one caption per image, ready for LoRA training.
 - **Share VRAM with diffusion.** On tight VRAM turn `force_offload` on (frees the LLM after each run)
   and/or raise `n_cpu_moe` on MoE models. Keep `force_offload` off for instant repeat prompting.
+
+## Changelog
+
+### 0.3.0 — automatic GPU setup + llama 0.3.44 compatibility
+- **Automatic CUDA-matched GPU install.** `install.py` now detects your ComfyUI's
+  `torch.version.cuda` and installs the matching [JamePeng](https://github.com/JamePeng/llama-cpp-python)
+  wheel (cu124 / cu126 / cu128 / cu130 / cu131) for your exact Python — no manual wheel-picking.
+- **Fixes silent CPU fallback.** A llama wheel whose CUDA major doesn't match torch's
+  (e.g. a cu128 wheel on a cu130 torch) loads but runs on CPU, because `ggml-cuda.dll` can't find
+  its `cudart64_<major>.dll`. This was the #1 "why is the LLM slow" issue; now the right wheel is
+  installed automatically.
+- **Reliable GPU detection + clear warning.** Replaced the unreliable `llama_supports_gpu_offload()`
+  (it returns `False` even on working builds) with a real `ggml-cuda.dll` ↔ torch-CUDA check. If the
+  LLM would run on CPU (CPU-only build, or a CUDA mismatch after a ComfyUI update), the node prints
+  a load-time warning with the exact reinstall command for *your* torch CUDA.
+- **`requirements.txt`**: ships a plain CPU `llama-cpp-python` fallback so the node always loads;
+  GPU selection moved to `install.py` (a hardcoded cu128 wheel used to break cu130 users).
+- **llama-cpp-python 0.3.44 vision fix.** 0.3.44 renamed the chat handler's projector attribute
+  `clip_model_path` → `mmproj_path` (new `mtmd` multimodal API). The node now accepts both, so
+  image (VLM) input keeps working on new and old builds.
 
 ## Credits
 

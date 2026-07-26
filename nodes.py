@@ -479,8 +479,12 @@ class ArtfatLLMPrompter:
             }
             LLMEngine.ensure_loaded(config)
 
-            if frames and (not hasattr(LLMEngine.chat_handler, "clip_model_path")
-                           or LLMEngine.chat_handler.clip_model_path is None):
+            # llama-cpp-python >= 0.3.44 renamed the handler's vision-projector path from
+            # `clip_model_path` to `mmproj_path` (old name is only a deprecated kwarg alias,
+            # no longer an attribute). Accept either so both old and new builds work.
+            _handler = LLMEngine.chat_handler
+            _mmproj = getattr(_handler, "mmproj_path", None) or getattr(_handler, "clip_model_path", None)
+            if frames and _mmproj is None:
                 raise ValueError("Images are connected but the loaded model has no mmproj (vision) module.")
 
             run_seed = seed if seed >= 0 else random.randint(0, 2 ** 31 - 1)
