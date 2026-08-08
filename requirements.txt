@@ -10,7 +10,12 @@ tqdm
 # detects your torch CUDA version and fetches the matching JamePeng wheel (Windows + NVIDIA).
 # Hardcoding a single CUDA wheel here is WRONG: a cu128 wheel silently falls back to CPU on
 # a cu130 torch (ggml-cuda.dll links cudart64_<major>, which must match torch's). So GPU
-# selection lives in install.py, not here. On CPU-only / non-Windows the node still runs
-# (slower); the model-load warning prints the exact manual command. See:
-# https://github.com/JamePeng/llama-cpp-python/releases
+# selection lives in install.py, not here.
+#
+# AMD (manual — install.py skips without nvidia-smi):
+#   Windows HIP:  pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/hip-radeon
+#   Linux ROCm:   pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/rocm72
+# llama_core.py treats ggml-hip / ggml-vulkan / ggml-metal as GPU-ok (not "CPU-only").
+# See: https://github.com/JamePeng/llama-cpp-python/releases
+#      https://llama-cpp-python.readthedocs.io/
 llama-cpp-python

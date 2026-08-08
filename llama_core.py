@@ -26,13 +26,33 @@ from llama_cpp.llama_chat_format import (
 from .support.gguf_layers import get_layer_count, get_nextn_count
 
 # GPU status, checked once at import. NOTE: llama_cpp.llama_supports_gpu_offload() is
-# UNRELIABLE here — it returns False even on a working CUDA build (checked before backend
-# init), so we DON'T use it. Instead we check the actual ggml-cuda.dll: whether it exists
-# (CPU-only build if not), and whether its required CUDA major (from its cudart/cublas
-# import) matches torch's CUDA major — a mismatch (e.g. cu128 wheel on cu130 torch) means
-# ggml-cuda.dll can't load its runtime DLLs and silently falls back to CPU.
+# UNRELIABLE here — it returns False even on a working GPU build (checked before backend
+# init), so we DON'T use it. Instead we look for a real ggml backend library:
+#   - HIP/ROCm: ggml-hip(.dll/.so)  — AMD; no torch CUDA major check (ROCm torch often
+#     has torch.version.cuda is None)
+#   - Vulkan / Metal: ggml-vulkan / ggml-metal
+#   - CUDA: ggml-cuda + cudart/cublas major must match torch's CUDA major — a mismatch
+#     (e.g. cu128 wheel on cu130 torch) means ggml-cuda can't load and silently falls
+#     back to CPU.
 _JAMEPENG_VER, _JAMEPENG_DATE = "0.3.44", "20260721"
 _CU_TAGS = {12: [124, 126, 128], 13: [130, 131]}
+_HIP_WHEEL_WIN = "https://abetlen.github.io/llama-cpp-python/whl/hip-radeon"
+_HIP_WHEEL_LINUX = "https://abetlen.github.io/llama-cpp-python/whl/rocm72"
+_VULKAN_WHEEL = "https://abetlen.github.io/llama-cpp-python/whl/vulkan"
+
+
+def _ggml_lib_dir():
+    import llama_cpp
+    return os.path.join(os.path.dirname(llama_cpp.__file__), "lib")
+
+
+def _find_ggml_backend(lib_dir, stem):
+    """Path to ggml-<stem> shared lib (.dll / .so), or None."""
+    for name in (f"{stem}.dll", f"{stem}.so", f"lib{stem}.so"):
+        path = os.path.join(lib_dir, name)
+        if os.path.exists(path):
+            return path
+    return None
 
 
 def _ggml_cuda_major(dll_path):
@@ -79,13 +99,28 @@ def _ggml_cuda_major(dll_path):
 
 
 def _gpu_status():
-    """('ok'|'cpu'|'mismatch'|'unknown', (need_major, torch_major))."""
+    """(status, backend, detail).
+
+    status: 'ok' | 'cpu' | 'mismatch' | 'unknown'
+    backend: 'hip' | 'vulkan' | 'metal' | 'cuda' | None
+    detail: for CUDA mismatch/unknown -> (need_major, torch_major); else None
+    """
     try:
-        import llama_cpp
-        cuda_dll = os.path.join(os.path.dirname(llama_cpp.__file__), "lib", "ggml-cuda.dll")
-        if not os.path.exists(cuda_dll):
-            return "cpu", None
-        need = _ggml_cuda_major(cuda_dll)
+        lib_dir = _ggml_lib_dir()
+        # Non-CUDA GPU backends: library present == GPU-capable build. Do this before
+        # CUDA so a HIP wheel is never mislabeled "CPU-ONLY (no CUDA)".
+        for backend, stem in (
+            ("hip", "ggml-hip"),
+            ("vulkan", "ggml-vulkan"),
+            ("metal", "ggml-metal"),
+        ):
+            if _find_ggml_backend(lib_dir, stem):
+                return "ok", backend, None
+
+        cuda_lib = _find_ggml_backend(lib_dir, "ggml-cuda")
+        if not cuda_lib:
+            return "cpu", None, None
+        need = _ggml_cuda_major(cuda_lib) if cuda_lib.endswith(".dll") else None
         try:
             import torch
             tc = getattr(torch.version, "cuda", None)
@@ -93,13 +128,20 @@ def _gpu_status():
         except Exception:
             tmaj = None
         if need is None or tmaj is None:
-            return "unknown", (need, tmaj)
-        return ("ok" if need == tmaj else "mismatch"), (need, tmaj)
+            # Linux .so or unreadable PE imports: assume OK if the backend lib exists.
+            if need is None and tmaj is None and not cuda_lib.endswith(".dll"):
+                return "ok", "cuda", None
+            return "unknown", "cuda", (need, tmaj)
+        if need == tmaj:
+            return "ok", "cuda", (need, tmaj)
+        return "mismatch", "cuda", (need, tmaj)
     except Exception:
-        return "unknown", None
+        return "unknown", None, None
 
 
-_GPU_STATUS, _GPU_DETAIL = _gpu_status()
+_GPU_STATUS, _GPU_BACKEND, _GPU_DETAIL = _gpu_status()
+if _GPU_STATUS == "ok" and _GPU_BACKEND:
+    print(f"[llm-prompter] GPU backend: {_GPU_BACKEND}")
 
 
 def _cuda_wheel_hint():
@@ -120,6 +162,16 @@ def _cuda_wheel_hint():
            f"v{_JAMEPENG_VER}-cu{cu}-win-{_JAMEPENG_DATE}/"
            f"llama_cpp_python-{_JAMEPENG_VER}+cu{cu}-{tag}-{tag}-win_amd64.whl")
     return sys.executable, url
+
+
+def _llama_update_hint():
+    """Where to get a matching llama-cpp-python build for this GPU backend."""
+    if _GPU_BACKEND == "hip":
+        index = _HIP_WHEEL_WIN if sys.platform == "win32" else _HIP_WHEEL_LINUX
+        return f"pip install llama-cpp-python --force-reinstall --extra-index-url {index}"
+    if _GPU_BACKEND == "vulkan":
+        return f"pip install llama-cpp-python --force-reinstall --extra-index-url {_VULKAN_WHEEL}"
+    return "https://github.com/JamePeng/llama-cpp-python/releases"
 
 
 # Base handlers always present in the fork.
@@ -180,6 +232,8 @@ _try_add(["LFM2.5-VL"], "LFM25VLChatHandler")
 _try_add(["MiniCPM-v4.5 (no thinking)", "MiniCPM-v4.5 (thinking)"], "MiniCPMv45ChatHandler")
 _try_add(["MiniCPM-v4.6 (no thinking)", "MiniCPM-v4.6 (thinking)"],
          "MiniCPMV46ChatHandler", "MiniCPMv46ChatHandler")
+# Generic multimodal path when the installed llama-cpp-python ships it.
+_try_add(["MTMD"], "MTMDChatHandler")
 
 # Labels shipped before v0.4.0. ComfyUI stores widget values by their text, so a saved
 # workflow still carries the old label and would otherwise land on "Value not in list".
@@ -365,7 +419,14 @@ class LLMEngine:
         if mmproj and mmproj != "None":
             mmproj_path = _resolve_gguf_path(mmproj)
             if chat_handler_name == "None":
-                raise ValueError('"chat_handler" cannot be None when an mmproj is set.')
+                vision_handlers = [h for h in CHAT_HANDLERS if h != "None"]
+                raise ValueError(
+                    '"chat_handler" cannot be None when an mmproj is set. '
+                    "Pick the handler that matches your VLM family "
+                    f"(available: {', '.join(vision_handlers)}). "
+                    "On abetlen HIP wheels, prefer Qwen2.5-VL / Gemma4 / MiniCPM-v2.6 / MTMD "
+                    "(Qwen3.5 / Qwen3-VL handlers need the JamePeng fork)."
+                )
 
             if vram_limit != -1:
                 mmproj_gb = os.path.getsize(mmproj_path) * 1.55 / (1024 ** 3)
@@ -385,8 +446,7 @@ class LLMEngine:
                 cls.chat_handler = handler_cls(**kwargs)
             except Exception as e:
                 raise RuntimeError(
-                    f"{e}\nUpdate llama-cpp-python from "
-                    "https://github.com/JamePeng/llama-cpp-python/releases"
+                    f"{e}\nUpdate llama-cpp-python: {_llama_update_hint()}"
                 )
         else:
             # No mmproj set. Every chat_handler in _HANDLERS is a VISION handler that
@@ -401,6 +461,9 @@ class LLMEngine:
                 n_gpu_layers = max(1, int(vram_limit / layer_gb))
             cls.chat_handler = handler_cls(verbose=False) if handler_cls is not None else None
 
+        # CUDA-only advisory: HIP/Vulkan/Metal already passed as ok above. A missing
+        # ggml-cuda used to always warn "CPU-ONLY" and push a JamePeng CUDA wheel —
+        # wrong for AMD HIP installs that ship ggml-hip instead.
         if n_gpu_layers != 0 and _GPU_STATUS in ("cpu", "mismatch"):
             exe, url = _cuda_wheel_hint()
             print("=" * 72)
@@ -408,14 +471,25 @@ class LLMEngine:
                 need, tmaj = _GPU_DETAIL
                 print(f"[llm-prompter] WARNING: llama-cpp-python is built for CUDA {need}.x, but "
                       f"your torch uses CUDA {tmaj}.x -> GPU offload FAILS (silent CPU fallback).")
+                print("[llm-prompter] The LLM will run on CPU (slow). To fix, FULLY CLOSE ComfyUI, then run:")
+                print(f'[llm-prompter]   "{exe}" -m pip install --force-reinstall --no-deps {url}')
+                print("[llm-prompter] (or re-run the node's install.py). Wheels: "
+                      "https://github.com/JamePeng/llama-cpp-python/releases")
             else:
-                print("[llm-prompter] WARNING: llama-cpp-python is a CPU-ONLY build (no CUDA).")
-            print("[llm-prompter] The LLM will run on CPU (slow). To fix, FULLY CLOSE ComfyUI, then run:")
-            print(f'[llm-prompter]   "{exe}" -m pip install --force-reinstall --no-deps {url}')
-            print("[llm-prompter] (or re-run the node's install.py). Wheels: "
-                  "https://github.com/JamePeng/llama-cpp-python/releases")
+                print("[llm-prompter] WARNING: llama-cpp-python has no GPU backend "
+                      "(no ggml-cuda / ggml-hip / ggml-vulkan).")
+                print("[llm-prompter] The LLM will run on CPU (slow). To fix, FULLY CLOSE ComfyUI, then:")
+                print(f'[llm-prompter]   NVIDIA: "{exe}" -m pip install --force-reinstall --no-deps {url}')
+                print(f"[llm-prompter]   AMD Windows HIP: \"{exe}\" -m pip install llama-cpp-python "
+                      f"--force-reinstall --extra-index-url {_HIP_WHEEL_WIN}")
+                print(f"[llm-prompter]   AMD Linux ROCm:  \"{exe}\" -m pip install llama-cpp-python "
+                      f"--force-reinstall --extra-index-url {_HIP_WHEEL_LINUX}")
+                print(f"[llm-prompter]   Vulkan: \"{exe}\" -m pip install llama-cpp-python "
+                      f"--force-reinstall --extra-index-url {_VULKAN_WHEEL}")
             print("=" * 72)
-        print(f"[llm-prompter] Loading model: {model}  (n_gpu_layers={n_gpu_layers}, n_cpu_moe={n_cpu_moe})")
+        backend = _GPU_BACKEND or "cpu"
+        print(f"[llm-prompter] Loading model: {model}  "
+              f"(n_gpu_layers={n_gpu_layers}, n_cpu_moe={n_cpu_moe}, backend={backend})")
         cls.llm = Llama(
             model_path,
             chat_handler=cls.chat_handler,
