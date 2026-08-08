@@ -36,9 +36,11 @@ from .support.gguf_layers import get_layer_count, get_nextn_count
 #     back to CPU.
 _JAMEPENG_VER, _JAMEPENG_DATE = "0.3.44", "20260721"
 _CU_TAGS = {12: [124, 126, 128], 13: [130, 131]}
-_HIP_WHEEL_WIN = "https://abetlen.github.io/llama-cpp-python/whl/hip-radeon"
-_HIP_WHEEL_LINUX = "https://abetlen.github.io/llama-cpp-python/whl/rocm72"
-_VULKAN_WHEEL = "https://abetlen.github.io/llama-cpp-python/whl/vulkan"
+# Windows AMD: build JamePeng llama-cpp-python with HIP via the bundled script
+# (abetlen hip-radeon wheels lack Qwen3.5 / other handlers this node expects).
+_HIP_BUILD_SCRIPT = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "scripts", "build-jamepeng-hip.ps1"
+)
 
 
 def _ggml_lib_dir():
@@ -164,13 +166,18 @@ def _cuda_wheel_hint():
     return sys.executable, url
 
 
+def _hip_build_hint():
+    """How Windows AMD users should (re)build a HIP llama-cpp-python for this node."""
+    return (
+        f'powershell -ExecutionPolicy Bypass -File "{_HIP_BUILD_SCRIPT}" '
+        "(ComfyUI fully closed; needs existing ROCm in python_env)"
+    )
+
+
 def _llama_update_hint():
     """Where to get a matching llama-cpp-python build for this GPU backend."""
-    if _GPU_BACKEND == "hip":
-        index = _HIP_WHEEL_WIN if sys.platform == "win32" else _HIP_WHEEL_LINUX
-        return f"pip install llama-cpp-python --force-reinstall --extra-index-url {index}"
-    if _GPU_BACKEND == "vulkan":
-        return f"pip install llama-cpp-python --force-reinstall --extra-index-url {_VULKAN_WHEEL}"
+    if sys.platform == "win32" and _GPU_BACKEND == "hip":
+        return _hip_build_hint()
     return "https://github.com/JamePeng/llama-cpp-python/releases"
 
 
@@ -423,9 +430,7 @@ class LLMEngine:
                 raise ValueError(
                     '"chat_handler" cannot be None when an mmproj is set. '
                     "Pick the handler that matches your VLM family "
-                    f"(available: {', '.join(vision_handlers)}). "
-                    "On abetlen HIP wheels, prefer Qwen2.5-VL / Gemma4 / MiniCPM-v2.6 / MTMD "
-                    "(Qwen3.5 / Qwen3-VL handlers need the JamePeng fork)."
+                    f"(available: {', '.join(vision_handlers)})."
                 )
 
             if vram_limit != -1:
@@ -461,9 +466,8 @@ class LLMEngine:
                 n_gpu_layers = max(1, int(vram_limit / layer_gb))
             cls.chat_handler = handler_cls(verbose=False) if handler_cls is not None else None
 
-        # CUDA-only advisory: HIP/Vulkan/Metal already passed as ok above. A missing
-        # ggml-cuda used to always warn "CPU-ONLY" and push a JamePeng CUDA wheel —
-        # wrong for AMD HIP installs that ship ggml-hip instead.
+        # Advisory when there is no usable GPU backend (or CUDA major mismatch).
+        # HIP already counts as ok above — do not push CUDA-only / abetlen HIP wheels.
         if n_gpu_layers != 0 and _GPU_STATUS in ("cpu", "mismatch"):
             exe, url = _cuda_wheel_hint()
             print("=" * 72)
@@ -477,15 +481,11 @@ class LLMEngine:
                       "https://github.com/JamePeng/llama-cpp-python/releases")
             else:
                 print("[llm-prompter] WARNING: llama-cpp-python has no GPU backend "
-                      "(no ggml-cuda / ggml-hip / ggml-vulkan).")
-                print("[llm-prompter] The LLM will run on CPU (slow). To fix, FULLY CLOSE ComfyUI, then:")
+                      "(no ggml-cuda / ggml-hip).")
+                print("[llm-prompter] The LLM will run on CPU (slow). FULLY CLOSE ComfyUI, then:")
                 print(f'[llm-prompter]   NVIDIA: "{exe}" -m pip install --force-reinstall --no-deps {url}')
-                print(f"[llm-prompter]   AMD Windows HIP: \"{exe}\" -m pip install llama-cpp-python "
-                      f"--force-reinstall --extra-index-url {_HIP_WHEEL_WIN}")
-                print(f"[llm-prompter]   AMD Linux ROCm:  \"{exe}\" -m pip install llama-cpp-python "
-                      f"--force-reinstall --extra-index-url {_HIP_WHEEL_LINUX}")
-                print(f"[llm-prompter]   Vulkan: \"{exe}\" -m pip install llama-cpp-python "
-                      f"--force-reinstall --extra-index-url {_VULKAN_WHEEL}")
+                if sys.platform == "win32":
+                    print(f"[llm-prompter]   AMD HIP (Windows): {_hip_build_hint()}")
             print("=" * 72)
         backend = _GPU_BACKEND or "cpu"
         print(f"[llm-prompter] Loading model: {model}  "
