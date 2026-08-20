@@ -12,10 +12,10 @@ tqdm
 # a cu130 torch (ggml-cuda.dll links cudart64_<major>, which must match torch's). So GPU
 # selection lives in install.py, not here.
 #
-# AMD (manual — install.py skips without nvidia-smi):
-#   Windows HIP:  pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/hip-radeon
-#   Linux ROCm:   pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/rocm72
-# llama_core.py treats ggml-hip / ggml-vulkan / ggml-metal as GPU-ok (not "CPU-only").
+# AMD Windows (manual — install.py skips without nvidia-smi):
+#   From this node folder, with ComfyUI closed:
+#     ..\..\python_env\python.exe -m pip install llama-cpp-python scikit-build-core "cmake>=3.21" ninja
+#     powershell -ExecutionPolicy Bypass -File .\scripts\build-jamepeng-hip.ps1
+# llama_core.py treats ggml-hip as GPU-ok (not "CPU-only").
 # See: https://github.com/JamePeng/llama-cpp-python/releases
-#      https://llama-cpp-python.readthedocs.io/
 llama-cpp-python
