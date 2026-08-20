@@ -1,25 +1,39 @@
-# Build JamePeng llama-cpp-python with HIP against an existing ComfyUI-rocm python_env.
+# Build JamePeng llama-cpp-python with HIP against this ComfyUI install's python_env.
 # No venv Activate.ps1 - uses python.exe + Lib\site-packages next to it.
 #
-# Usage (ComfyUI CLOSED):
+# Layout assumed (any ComfyUI root name):
+#   <ComfyUI>/python_env/python.exe
+#   <ComfyUI>/custom_nodes/comfyui-llm-prompter/scripts/build-jamepeng-hip.ps1
+#
+# Usage (from the node folder, ComfyUI CLOSED):
 #   powershell -ExecutionPolicy Bypass -File .\scripts\build-jamepeng-hip.ps1
 #   powershell -ExecutionPolicy Bypass -File .\scripts\build-jamepeng-hip.ps1 -Gfx gfx1201
 
 param(
-    [string]$PythonExe = "D:\ComfyUI-rocm\python_env\python.exe",
+    [string]$PythonExe = "",
     [string]$Gfx = "",
     [string]$SrcDir = "C:\temp\lpy"
 )
 
 $ErrorActionPreference = "Stop"
+
+# Node root = parent of scripts/; ComfyUI root = two levels above the node folder.
+$NodeRoot = Split-Path -Parent $PSScriptRoot
+$ComfyRoot = (Resolve-Path (Join-Path $NodeRoot "..\..")).Path
+if (-not $PythonExe) {
+    $PythonExe = Join-Path $ComfyRoot "python_env\python.exe"
+}
+Write-Host "[build] ComfyUI root: $ComfyRoot"
+Write-Host "[build] node root:    $NodeRoot"
+
 if (-not (Test-Path $PythonExe)) {
-    throw "Python not found: $PythonExe"
+    throw "Python not found: $PythonExe (expected <ComfyUI>\python_env\python.exe). Pass -PythonExe if your layout differs."
 }
 
 $Py = (Resolve-Path $PythonExe).Path
 Write-Host "[build] python: $Py"
 
-# ComfyUI-rocm python_env: <python_env>\Lib\site-packages
+# <python_env>\Lib\site-packages
 $PyRoot = Split-Path -Parent $Py
 $SitePackages = Join-Path $PyRoot "Lib\site-packages"
 if (-not (Test-Path $SitePackages)) {
@@ -170,10 +184,10 @@ if (-not (Test-Path ($hipLib -replace '/', '\'))) {
 $env:CMAKE_ARGS = "-DGGML_HIP=ON -DGGML_HIPBLAS=on -DGPU_TARGETS=$Gfx -DCMAKE_HIP_ARCHITECTURES=$Gfx -DCMAKE_C_COMPILER=`"$R/lib/llvm/bin/clang.exe`" -DCMAKE_CXX_COMPILER=`"$R/lib/llvm/bin/clang++.exe`" -DCMAKE_RC_COMPILER=`"$RcCMake`" -DHIP_LIBRARIES=`"$hipLib`" -DCMAKE_PREFIX_PATH=`"$R`""
 Write-Host "[build] CMAKE_ARGS=$env:CMAKE_ARGS"
 
-Write-Host "[build] ensuring cmake>=3.21 + ninja in python_env ..."
-& $Py -m pip install "cmake>=3.21" ninja
+Write-Host "[build] ensuring build deps (scikit-build-core, cmake>=3.21, ninja) in python_env ..."
+& $Py -m pip install "scikit-build-core" "cmake>=3.21" ninja
 if ($LASTEXITCODE -ne 0) {
-    throw "Failed to install cmake/ninja into python_env."
+    throw "Failed to install scikit-build-core/cmake/ninja into python_env."
 }
 # Prefer pip-provided cmake/ninja on PATH for scikit-build-core
 $scriptsDir = Join-Path $PyRoot "Scripts"
@@ -230,7 +244,7 @@ try {
     Write-Host "[build] compiling from $SrcDir (long) ..."
     & $Py -m pip install "$SrcDir" --force-reinstall --no-cache-dir --no-build-isolation
     if ($LASTEXITCODE -ne 0) {
-        throw "pip install failed (exit $LASTEXITCODE). llama_cpp is NOT installed - restore the hip-radeon wheel if needed."
+        throw "pip install failed (exit $LASTEXITCODE). llama_cpp is NOT installed - fix the build error above, then re-run this script."
     }
 
     Write-Host "[build] verify handlers + HIP backend ..."
