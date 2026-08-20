@@ -222,7 +222,9 @@ cd <ComfyUI>\custom_nodes\comfyui-llm-prompter
 ..\..\python_env\python.exe -m pip install scikit-build-core "cmake>=3.21" ninja
 
 # 3) Build JamePeng with HIP into that same python_env
+#    Default pins 4854c7d (v0.3.47, 2026-08-15) — avoids mtmd_cpp ctypes break on newer main
 powershell -ExecutionPolicy Bypass -File .\scripts\build-jamepeng-hip.ps1
+# optional: -Gfx gfx1201
 ```
 
 The script resolves `<ComfyUI>\python_env\python.exe` as **two folders up** from this node

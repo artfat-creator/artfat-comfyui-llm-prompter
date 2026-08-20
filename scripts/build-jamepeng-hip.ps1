@@ -8,11 +8,15 @@
 # Usage (from the node folder, ComfyUI CLOSED):
 #   powershell -ExecutionPolicy Bypass -File .\scripts\build-jamepeng-hip.ps1
 #   powershell -ExecutionPolicy Bypass -File .\scripts\build-jamepeng-hip.ps1 -Gfx gfx1201
+#   powershell -ExecutionPolicy Bypass -File .\scripts\build-jamepeng-hip.ps1 -Ref 4854c7d305650b6bc9cf2dc805931a5bf2e40dd0
 
 param(
     [string]$PythonExe = "",
     [string]$Gfx = "",
-    [string]$SrcDir = "C:\temp\lpy"
+    [string]$SrcDir = "C:\temp\lpy",
+    # Pin away from main: 4a484f8f (2026-08-20) added mtmd device=NewType and breaks ctypes.
+    # 4854c7d = v0.3.47 (2026-08-15) — last known-good before that mtmd_cpp change.
+    [string]$Ref = "4854c7d305650b6bc9cf2dc805931a5bf2e40dd0"
 )
 
 $ErrorActionPreference = "Stop"
@@ -205,7 +209,7 @@ if ($cmakeExe -and (Test-Path $cmakeExe)) {
     Write-Warning "cmake.exe not found after pip install - scikit-build may still fail."
 }
 
-Write-Host "[build] enabling git longpaths + cloning to $SrcDir ..."
+Write-Host "[build] enabling git longpaths + cloning JamePeng@$Ref to $SrcDir ..."
 git config --global core.longpaths true
 try {
     New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" `
@@ -221,20 +225,36 @@ if (Test-Path $SrcDir) {
     Remove-Item -Recurse -Force $SrcDir
 }
 
-git clone --recursive --depth 1 https://github.com/JamePeng/llama-cpp-python.git $SrcDir
+git clone https://github.com/JamePeng/llama-cpp-python.git $SrcDir
 if ($LASTEXITCODE -ne 0) {
     if (Test-Path $SrcDir) { Remove-Item -Recurse -Force $SrcDir -ErrorAction Continue }
     throw "git clone failed (exit $LASTEXITCODE). Enable LongPathsEnabled + git core.longpaths true, reboot, re-run."
 }
 
+git -C $SrcDir checkout $Ref
+if ($LASTEXITCODE -ne 0) {
+    if (Test-Path $SrcDir) { Remove-Item -Recurse -Force $SrcDir -ErrorAction Continue }
+    throw "git checkout $Ref failed (exit $LASTEXITCODE)."
+}
+
+git -C $SrcDir submodule update --init --recursive
+if ($LASTEXITCODE -ne 0) {
+    if (Test-Path $SrcDir) { Remove-Item -Recurse -Force $SrcDir -ErrorAction Continue }
+    throw "git submodule update failed (exit $LASTEXITCODE). Often MAX_PATH - enable LongPathsEnabled."
+}
+Write-Host "[build] checked out $(git -C $SrcDir rev-parse --short HEAD)"
+
 $verifyPy = Join-Path $env:TEMP "llm_prompter_verify_llama.py"
 @'
+import llama_cpp
+import llama_cpp.mtmd_cpp
 from llama_cpp.llama_chat_format import Qwen35ChatHandler
-import llama_cpp, os
+import os
 lib = os.path.join(os.path.dirname(llama_cpp.__file__), "lib")
 print("version", llama_cpp.__version__)
+print("mtmd_cpp OK")
 print("Qwen35ChatHandler OK")
-print("libs", [f for f in os.listdir(lib) if "hip" in f.lower() or "vulkan" in f.lower()][:20])
+print("libs", [f for f in os.listdir(lib) if "hip" in f.lower()][:20])
 '@ | Set-Content -Path $verifyPy -Encoding ASCII
 
 try {
