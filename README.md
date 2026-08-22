@@ -171,6 +171,30 @@ working build, so check the load log / VRAM, not that function.)
 install a matching `llama-cpp-python` build manually from the
 [JamePeng releases](https://github.com/JamePeng/llama-cpp-python/releases).
 
+### ComfyUI crashes / closes when the LLM runs (`llm_enabled` on)
+
+A **hard crash** the moment the LLM runs — the ComfyUI window closes, or the console dumps a long
+`Extension modules: …` list and dies — is a **broken `llama-cpp-python` install**, not a workflow
+bug. The crash is in llama's GPU backend, which lives in ComfyUI's **Python environment**, so
+**uninstalling the node in Manager does *not* fix it** (that only removes the node folder; the broken
+llama package stays). Fix it in this order:
+
+1. **Close ComfyUI completely** — quit the whole app, not just the browser tab. The llama `.dll` is
+   locked while it runs and can't be replaced otherwise.
+2. **Re-run `install.py`** with ComfyUI's own Python — this force-reinstalls the correct CUDA llama
+   build. Run it from the node folder (`custom_nodes/comfyui-llm-prompter`):
+   - **portable:** `..\..\python_embeded\python.exe install.py`
+   - **venv / Comfy Desktop / pinokio:** use that environment's `python.exe` (the path shown as
+     `Python executable:` in your startup log), e.g.
+     `"...\ComfyUI\.venv\Scripts\python.exe" install.py`
+
+   Then start ComfyUI again.
+3. **Update your NVIDIA driver** (latest Game Ready / Studio, then reboot). An outdated driver on a
+   newer CUDA can hard-crash llama on the GPU even when everything else is correct.
+4. **Still crashing? Run the LLM on CPU to unblock yourself:** set `vram_limit` low (or GPU layers to
+   0) in the node. Slower but stable — and it confirms the problem is the GPU llama build, not the
+   node or your workflow.
+
 ## Models
 
 Put GGUF files in `ComfyUI/models/LLM/`. For image input (VLM) also download the matching

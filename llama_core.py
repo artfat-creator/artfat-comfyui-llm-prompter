@@ -292,6 +292,14 @@ class LLMEngine:
                     "https://github.com/JamePeng/llama-cpp-python/releases"
                 )
         else:
+            # No mmproj set. Every chat_handler in _HANDLERS is a VISION handler that
+            # REQUIRES an mmproj (llama_cpp raises "mmproj_path is required" otherwise).
+            # So a VL handler picked without an mmproj can only mean text-only intent —
+            # fall back to the model's own chat template instead of crashing.
+            if handler_cls is not None:
+                print(f"[llm-prompter] chat_handler '{chat_handler_name}' needs an mmproj (vision), "
+                      f"but none is set -> loading text-only (no vision). Set chat_handler=None to silence this.")
+                handler_cls = None
             if vram_limit != -1:
                 n_gpu_layers = max(1, int(vram_limit / layer_gb))
             cls.chat_handler = handler_cls(verbose=False) if handler_cls is not None else None
