@@ -23,8 +23,8 @@ import sys
 
 # --- JamePeng release this installer targets. Bump all three when upgrading. ------------
 # Newest wheels: https://github.com/JamePeng/llama-cpp-python/releases
-_LLAMA_VER = "0.3.44"
-_REL_DATE = "20260721"
+_LLAMA_VER = "0.3.48"
+_REL_DATE = "20260821"
 # CUDA major -> cu-tags JamePeng ships for it (ascending). Within a major we pick the
 # highest tag whose minor is <= torch's minor; cudart64_<major> is forward-compatible
 # across minors, so a same-major wheel loads against torch's runtime DLLs.

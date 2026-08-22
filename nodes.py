@@ -64,6 +64,7 @@ _REMEMBER = (
     "max_tokens", "temperature", "top_k", "top_p", "min_p", "typical_p", "repeat_penalty",
     "frequency_penalty", "mirostat_mode", "mirostat_tau", "mirostat_eta", "type_k", "type_v",
     "max_size", "image_min_tokens", "image_max_tokens",
+    "mtp_speculative", "mtp_draft_max",
 )
 
 
@@ -246,6 +247,11 @@ class ArtfatLLMPrompter:
                                            "tooltip": "ON: ignore the LLM and treat 'batch_prompts' as a list (one prompt per line). Wire the 'positive_list' output to KSampler.positive -> one image per line from a single Queue."}),
                 "batch_prompts": ("STRING", {"default": "", "multiline": True,
                                              "placeholder": "batch mode: one prompt per line. blank lines skipped, lines starting with # are comments. prefix/suffix still apply to each."}),
+                # --- MTP speculative decoding (added at the END so no positional widget-value drift) ---
+                "mtp_speculative": ("BOOLEAN", {"default": False,
+                                                "tooltip": "Use the model's built-in MTP/NextN heads to draft tokens. Only works on '-mtp' GGUF builds; on any other model it is ignored and the model loads normally. Costs a few hundred MB of VRAM. Measured +90% tok/s on Qwen3.8-27B."}),
+                "mtp_draft_max": ("INT", {"default": 2, "min": 1, "max": 8, "step": 1,
+                                          "tooltip": "How many tokens MTP drafts ahead per step. 2 is the value upstream recommends for 27B. Higher drafts more but wastes more when a guess is rejected."}),
             },
             "optional": {
                 "image_1": ("IMAGE",),
@@ -355,12 +361,15 @@ class ArtfatLLMPrompter:
             top_k, top_p, min_p, typical_p, repeat_penalty, frequency_penalty,
             mirostat_mode, mirostat_tau, mirostat_eta, type_k, type_v, max_size,
             image_min_tokens, image_max_tokens, freeze=False, batch_mode=False, batch_prompts="",
+            mtp_speculative=False, mtp_draft_max=2,
             image_1=None, image_2=None, clip=None, queue=None, unique_id=None):
 
         # --- sanitize every widget value (tolerate stale / shifted saved values) ---
         n_ctx = int(_num(n_ctx, 8192, 1024, cast=int))
         vram_limit = int(_num(vram_limit, -1, -1, cast=int))
         n_cpu_moe = int(_num(n_cpu_moe, 0, 0, cast=int))
+        mtp_speculative = bool(mtp_speculative)
+        mtp_draft_max = int(_num(mtp_draft_max, 2, 1, 8, cast=int))
         max_tokens = int(_num(max_tokens, 512, 16, 8192, cast=int))
         temperature = _num(temperature, 0.6, 0.0, 2.0)
         seed = int(_num(seed, 0, -1, cast=int))
@@ -476,6 +485,7 @@ class ArtfatLLMPrompter:
                 "n_ctx": n_ctx, "vram_limit": vram_limit, "n_cpu_moe": n_cpu_moe,
                 "type_k": type_k, "type_v": type_v,
                 "image_min_tokens": image_min_tokens, "image_max_tokens": image_max_tokens,
+                "mtp_speculative": mtp_speculative, "mtp_draft_max": mtp_draft_max,
             }
             LLMEngine.ensure_loaded(config)
 

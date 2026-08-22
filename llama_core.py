@@ -23,7 +23,7 @@ from llama_cpp.llama_chat_format import (
     MiniCPMv26ChatHandler,
 )
 
-from .support.gguf_layers import get_layer_count
+from .support.gguf_layers import get_layer_count, get_nextn_count
 
 # GPU status, checked once at import. NOTE: llama_cpp.llama_supports_gpu_offload() is
 # UNRELIABLE here — it returns False even on a working CUDA build (checked before backend
@@ -142,12 +142,23 @@ _HANDLERS = {
 }
 
 
-def _try_add(names, import_name):
-    """Register optional, version-dependent chat handlers if the fork ships them."""
-    try:
-        module = __import__("llama_cpp.llama_chat_format", fromlist=[import_name])
-        handler = getattr(module, import_name)
-    except Exception:
+def _try_add(names, *import_names):
+    """Register optional, version-dependent chat handlers if the fork ships them.
+
+    Accepts several class names for one handler: upstream sometimes renames a class
+    between releases (llama-cpp-python 0.3.48 renamed MiniCPMv46ChatHandler ->
+    MiniCPMV46ChatHandler), and a single hardcoded name makes the handler vanish from
+    the dropdown silently. First name that imports wins.
+    """
+    handler = None
+    for import_name in import_names:
+        try:
+            module = __import__("llama_cpp.llama_chat_format", fromlist=[import_name])
+            handler = getattr(module, import_name)
+            break
+        except Exception:
+            continue
+    if handler is None:
         return
     for name in names:
         CHAT_HANDLERS.append(name)
@@ -164,7 +175,7 @@ _try_add(["GLM-4.1V-Thinking"], "GLM41VChatHandler")
 _try_add(["LFM2-VL"], "LFM2VLChatHandler")
 _try_add(["LFM2.5-VL"], "LFM25VLChatHandler")
 _try_add(["MiniCPM-v4.5", "MiniCPM-v4.5-Thinking"], "MiniCPMv45ChatHandler")
-_try_add(["MiniCPM-v4.6", "MiniCPM-v4.6-Thinking"], "MiniCPMv46ChatHandler")
+_try_add(["MiniCPM-v4.6", "MiniCPM-v4.6-Thinking"], "MiniCPMV46ChatHandler", "MiniCPMv46ChatHandler")
 
 
 def _resolve_gguf_path(filename):
@@ -183,6 +194,40 @@ def _resolve_gguf_path(filename):
         if full and os.path.exists(full):
             return full
     return os.path.join(folder_paths.models_dir, "LLM", filename)
+
+
+def _mtp_kwargs(model_path, enabled, draft_max):
+    """Extra Llama() kwargs for MTP speculative decoding, or {} when it cannot be used.
+
+    MTP (Multi-Token Prediction) uses NextN heads baked into an "-mtp" GGUF as a built-in
+    draft model, so generation needs no second model. Measured on Qwen3.8-27B Q4_K_M /
+    RTX 3090: 17.6 -> 33.5 tok/s (+90%) for +430 MiB VRAM. Gains scale with how predictable
+    the text is, so other workloads will differ.
+
+    The toggle means "use it if this model has it", never "enable or die": asking llama.cpp
+    for an MTP context on a model without NextN tensors raises at context creation, which
+    would look like a broken node to anyone who picked a plain GGUF. So the head count is
+    probed from the GGUF header first and the request is dropped (with a printed reason)
+    when the model has none, or when the installed llama-cpp-python predates the API.
+    """
+    if not enabled:
+        return {}
+    heads = get_nextn_count(model_path)
+    if heads <= 0:
+        print("[llm-prompter] mtp_speculative is ON but this GGUF has no MTP/NextN tensors "
+              "-> loading normally. Use the '-mtp' build of the model to get the speedup.")
+        return {}
+    try:
+        from llama_cpp.llama_speculative import SpecConfig, SpeculativeType
+    except Exception:
+        print("[llm-prompter] mtp_speculative needs llama-cpp-python >= 0.3.48 "
+              "-> loading normally. Run install.py to upgrade.")
+        return {}
+    print(f"[llm-prompter] MTP enabled: {heads} NextN head(s), draft_n_max={draft_max}")
+    return {
+        "load_mtp": True,
+        "speculative": SpecConfig(spec_type=SpeculativeType.DRAFT_MTP, draft_n_max=draft_max),
+    }
 
 
 class LLMEngine:
@@ -253,6 +298,8 @@ class LLMEngine:
         image_max_tokens = config["image_max_tokens"]
         type_k = GGML_KV_TYPES.get(config.get("type_k", "f16"))
         type_v = GGML_KV_TYPES.get(config.get("type_v", "f16"))
+        mtp_speculative = bool(config.get("mtp_speculative", False))
+        mtp_draft_max = int(config.get("mtp_draft_max", 2))
 
         handler_cls = _HANDLERS.get(chat_handler_name)
         if chat_handler_name not in _HANDLERS:
@@ -260,6 +307,7 @@ class LLMEngine:
 
         model_path = _resolve_gguf_path(model)
         n_gpu_layers = -1
+        mtp_kwargs = _mtp_kwargs(model_path, mtp_speculative, mtp_draft_max)
 
         if vram_limit != -1:
             layers = get_layer_count(model_path) or 32
@@ -328,6 +376,7 @@ class LLMEngine:
             type_k=type_k,
             type_v=type_v,
             verbose=False,
+            **mtp_kwargs,
         )
 
 

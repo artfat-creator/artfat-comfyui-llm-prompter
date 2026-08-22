@@ -78,6 +78,35 @@ def read_value_of_type(f, atype):
     raise ValueError(f"Unknown array item type {atype}")
 
 
+def get_nextn_count(path):
+    """Number of trained NextN (MTP) heads in a GGUF, read from the header alone.
+
+    Key is "<arch>.nextn_predict_layers" (verified on Qwen3.8-27B, where it is 1 and the
+    head lives in the last block). Returns 0 when the model has no MTP tensors, so callers
+    can decide BEFORE building the context — asking llama.cpp for an MTP context on a plain
+    model is a hard failure ("context type MTP requested but model doesn't contain MTP
+    layers"), not a silent fallback. Returns 0 on any read error: no MTP is always safe.
+    """
+    try:
+        with open(path, "rb") as f:
+            if f.read(4) != b"GGUF":
+                return 0
+            read_u32(f)          # version
+            read_u64(f)          # tensor_count
+            kv_count = read_u64(f)
+            for _ in range(kv_count):
+                key = read_string(f)
+                value = read_value(f)
+                if key.lower().endswith(".nextn_predict_layers"):
+                    try:
+                        return int(value)
+                    except Exception:
+                        return 0
+    except Exception as e:
+        print(f"[llm-prompter] MTP probe failed ({e}); assuming no MTP.")
+    return 0
+
+
 def get_layer_count(path):
     meta = {}
     try:
