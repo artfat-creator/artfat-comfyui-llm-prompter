@@ -68,6 +68,45 @@ def _has_nvidia():
         return False
 
 
+def _installed_wheel():
+    """(version, source_url) of the llama-cpp-python already installed, or None.
+
+    Read from metadata instead of importing: importing loads the DLLs and would make
+    them impossible to replace in this same process.
+
+    The version alone is not enough to tell builds apart. pip drops the local segment,
+    so a cu128 and a cu130 wheel both report plain "0.3.48" and the CUDA tag is lost.
+    pip does record the exact URL it installed from in direct_url.json, so that is what
+    we compare against. Returns url=None for a wheel installed from PyPI (the CPU build).
+    """
+    try:
+        from importlib.metadata import distribution
+        dist = distribution("llama_cpp_python")
+        ver = dist.version
+    except Exception:
+        return None
+    url = None
+    try:
+        import json
+        raw = dist.read_text("direct_url.json")
+        if raw:
+            url = json.loads(raw).get("url")
+    except Exception:
+        pass
+    return ver, url
+
+
+def _llama_already_loaded():
+    """True when llama_cpp is imported in THIS process, so its DLLs are locked.
+
+    ComfyUI-Manager runs install scripts inside the running ComfyUI process. If the node
+    has been used in this session, --force-reinstall deletes the old package and then
+    fails to write the new one, leaving a broken llama_cpp. That is worse than not
+    upgrading at all, so we bail out and print the command to run by hand instead.
+    """
+    return "llama_cpp" in sys.modules
+
+
 def main():
     if sys.platform != "win32":
         print("[llm-prompter] Non-Windows platform - GPU auto-install not wired up yet; "
@@ -96,6 +135,28 @@ def main():
            f"v{_LLAMA_VER}-cu{cu}-win-{_REL_DATE}/"
            f"llama_cpp_python-{_LLAMA_VER}+cu{cu}-{py}-{py}-win_amd64.whl")
 
+    # Nothing to do if this exact wheel is already in place. Without this the installer
+    # re-downloads ~300 MB on every run, including every Manager update check.
+    have = _installed_wheel()
+    if have and have[1] == url:
+        print(f"[llm-prompter] llama-cpp-python {_LLAMA_VER}+cu{cu} already installed - nothing to do.")
+        return
+
+    if _llama_already_loaded():
+        print("=" * 72)
+        print("[llm-prompter] llama-cpp-python is already loaded in this process, so its DLLs "
+              "are locked and cannot be replaced safely.")
+        if have:
+            print(f"[llm-prompter] Installed: {have[0]} from {have[1] or 'PyPI (CPU build)'}")
+        print(f"[llm-prompter] Wanted:    {_LLAMA_VER}+cu{cu}")
+        print("[llm-prompter] CLOSE ComfyUI completely, then run:")
+        print(f'[llm-prompter]   "{sys.executable}" -m pip install --force-reinstall --no-deps {url}')
+        print("=" * 72)
+        return
+
+    if have:
+        print(f"[llm-prompter] Found {have[0]} ({have[1] or 'PyPI CPU build'}), "
+              f"upgrading to {_LLAMA_VER}+cu{cu} ...")
     print(f"[llm-prompter] torch CUDA {major}.{minor} -> installing cu{cu} build for {py} ...")
     try:
         subprocess.run(

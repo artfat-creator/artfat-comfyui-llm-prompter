@@ -333,7 +333,62 @@ keep it resident and enjoy near-instant prompts.
 - **Share VRAM with diffusion.** On tight VRAM turn `force_offload` on (frees the LLM after each run)
   and/or raise `n_cpu_moe` on MoE models. Keep `force_offload` off for instant repeat prompting.
 
+## MTP speculative decoding (text-only)
+
+Some GGUF releases ship an `-mtp` twin containing trained NextN heads. Those heads let the
+model draft its own next tokens, so speculative decoding works with no second draft model
+loaded. Turn on `mtp_speculative` to use them.
+
+Measured on Qwen3.8-27B Q4_K_M, RTX 3090, same seed and prompt, ~250 tokens:
+
+| | tokens | sec | tok/s |
+|---|---|---|---|
+| off | 249 | 14.13 | 17.62 |
+| on | 250 | 7.46 | 33.51 |
+
+That is +90% for +430 MiB of VRAM. Treat it as one data point, not a promise: the gain
+depends on how predictable the text is, and other models and quants will differ. Upstream
+reports that on some extreme quants MTP is actually *slower*, so measure before relying on it.
+
+**The toggle is safe to leave on.** It means "use MTP if this model has it", never "enable or
+fail". Before loading, the node reads the GGUF header and checks for NextN tensors, and it
+quietly falls back to a normal load, printing why, in each of these cases:
+
+- the model has no MTP tensors (asking llama.cpp for an MTP context on a plain model is a hard
+  error, not a fallback)
+- `llama-cpp-python` is older than 0.3.48, which is where the speculative API arrived
+- **an mmproj is loaded.** MTP is text-only. Images enter the sequence as negative placeholder
+  token ids, the drafter re-evaluates that prefix, and generation dies with
+  `invalid negative token id`. So on image runs MTP stands down and text runs still get the speedup.
+
+`mtp_draft_max` controls how many tokens are drafted per step. 2 is what upstream suggests for
+27B. Higher values draft more but waste more work when a guess is rejected.
+
+Requires `llama-cpp-python` 0.3.48 or newer; `install.py` handles that for you.
+
 ## Changelog
+
+### 0.4.0 — MTP speculative decoding + llama 0.3.48
+
+- **MTP speculative decoding.** New `mtp_speculative` toggle uses the NextN heads baked into
+  an `-mtp` GGUF as a built-in draft model. Measured +90% tok/s on Qwen3.8-27B Q4_K_M / RTX 3090
+  (17.62 → 33.51) for +430 MiB VRAM. One machine, one prompt — your mileage will differ.
+- **The toggle never breaks a run.** The GGUF header is checked for NextN tensors before loading,
+  and MTP is skipped with a printed reason when the model has none, when `llama-cpp-python` is
+  older than 0.3.48, or when an mmproj is loaded (MTP is text-only — image tokens are negative
+  placeholder ids that the drafter cannot re-evaluate).
+- **`mtp_draft_max`** exposes the draft depth, default 2.
+- **Fixed: `MiniCPM-v4.6` disappeared from the handler list.** 0.3.48 renamed
+  `MiniCPMv46ChatHandler` → `MiniCPMV46ChatHandler`; the node now accepts several class names per
+  handler and takes the first that imports, so a rename upstream no longer silently drops an entry.
+- **`install.py` no longer re-downloads on every run.** It compares the exact wheel URL recorded in
+  `direct_url.json` and exits early when the right build is already installed (pip drops the local
+  `+cu130` segment, so comparing versions alone cannot tell CUDA builds apart).
+- **`install.py` refuses to replace locked DLLs.** ComfyUI-Manager runs install scripts inside the
+  running ComfyUI process; if `llama_cpp` is already imported, `--force-reinstall` would delete the
+  old package and fail to write the new one, leaving a broken install. It now detects that and
+  prints the command to run with ComfyUI closed instead.
+- Targets `llama-cpp-python` 0.3.48.
 
 ### 0.3.0 — automatic GPU setup + llama 0.3.44 compatibility
 - **Automatic CUDA-matched GPU install.** `install.py` now detects your ComfyUI's
