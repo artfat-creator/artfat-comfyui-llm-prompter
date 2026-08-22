@@ -77,6 +77,13 @@ A/B on one machine, same seed, same prompt, warmup before timing, ~250 tokens ea
 The DeltaNet CUDA bug from ggml-org/llama.cpp discussion #27164 did NOT reproduce on
 the 27B hybrid: output is coherent, not garbage.
 
+## Live confirmation (2026-08-22)
+
+Confirmed by the author in a real ComfyUI graph after the vision gate landed: the node
+loads, generates, and the MTP toggle can be left on permanently. With an mmproj wired
+the run proceeds normally and prints why MTP stood down; text-only runs take the
+speedup. No crash in either mode.
+
 ## What was NOT measured
 
 - one prompt, one workload type. MTP gains scale with how predictable the text is,
