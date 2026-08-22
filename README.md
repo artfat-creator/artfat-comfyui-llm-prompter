@@ -384,6 +384,14 @@ Requires `llama-cpp-python` 0.3.48 or newer; `install.py` handles that for you.
 
 ## Changelog
 
+### 0.4.1 — clearer handler names
+
+- Handler entries now state the mode: `(thinking)` / `(no thinking)`. The four separate
+  Qwen3.5 / 3.6 items became one `Qwen3.5 / 3.6 / 3.8` pair, since those builds all report
+  `qwen35` as their architecture and there is no separate Qwen3.8 handler to look for.
+- Workflows saved with the pre-0.4.1 names keep working; the node resolves the old labels.
+- Fixes `MiniCPM-v4.6` never receiving `enable_thinking` — it was missing from the family check.
+
 ### 0.4.0 — MTP speculative decoding + llama 0.3.48
 
 - **MTP speculative decoding.** New `mtp_speculative` toggle uses the NextN heads baked into
