@@ -25,7 +25,7 @@ from PIL import Image
 import comfy.model_management as mm
 import folder_paths
 
-from .llama_core import LLMEngine, CHAT_HANDLERS
+from .llama_core import LLMEngine, CHAT_HANDLERS, normalize_handler
 from .presets import (
     INSTRUCTION_PRESETS,
     INSTRUCTION_NAMES,
@@ -190,14 +190,16 @@ class ArtfatLLMPrompter:
                 "chat_handler": (CHAT_HANDLERS, {
                     "default": "None",
                     "tooltip": (
-                        "Chat template for the model. Pick by FAMILY, not by the exact release "
-                        "number: Qwen3.6 and Qwen3.8 builds are all qwen35 inside, so they use "
-                        "the Qwen3.5 handlers. Set to None for text-only (also set mmproj to None "
-                        "to save VRAM).\n\n"
-                        "A '-Thinking' handler lets the model reason first; the node strips the "
-                        "reasoning so only the prompt reaches CLIP. Reasoning spends the same "
+                        "Chat template for the model. Entries are FAMILIES, not individual "
+                        "releases: Qwen3.6 and Qwen3.8 GGUFs both report qwen35 as their "
+                        "architecture, so they all use the Qwen3.5 / 3.6 / 3.8 entry. Set to None "
+                        "for text-only, and set mmproj to None too to save VRAM.\n\n"
+                        "(thinking) lets the model reason before answering; the node strips the "
+                        "reasoning so only the prompt reaches CLIP. That reasoning spends the same "
                         "max_tokens budget as the answer, so raise max_tokens to 2048 or more or "
-                        "the prompt gets cut off mid-sentence. Plain 'Qwen3.5' turns thinking off."
+                        "the prompt gets cut off mid-sentence. (no thinking) skips it and is "
+                        "faster.\n\n"
+                        "Labels from before v0.4.0 still resolve, so old workflows keep working."
                     ),
                 }),
                 "n_ctx": ("INT", {"default": 8192, "min": 1024, "max": 327680, "step": 128}),
@@ -403,8 +405,10 @@ class ArtfatLLMPrompter:
             type_v = "f16"
         if mode not in ("composite", "batch"):
             mode = "composite"
-        if chat_handler not in CHAT_HANDLERS:
-            chat_handler = "None"
+        # Resolve through normalize_handler, not a plain membership test: a workflow saved
+        # before v0.4.0 carries the old label (e.g. "Qwen3.5") and must keep working instead
+        # of silently falling back to None and losing vision.
+        chat_handler = normalize_handler(chat_handler) or "None"
         if instruction_preset not in INSTRUCTION_PRESETS:
             instruction_preset = "Custom"
         system_preset = str(system_preset or "Custom")

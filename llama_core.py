@@ -168,14 +168,50 @@ def _try_add(names, *import_names):
 _try_add(["Gemma3"], "Gemma3ChatHandler")
 _try_add(["Gemma4"], "Gemma4ChatHandler")
 _try_add(["Qwen2.5-VL", "MinerU2.5-Pro"], "Qwen25VLChatHandler")
-_try_add(["Qwen3-VL", "Qwen3-VL-Thinking"], "Qwen3VLChatHandler")
-_try_add(["Qwen3.5", "Qwen3.5-Thinking", "Qwen3.6", "Qwen3.6-Thinking"], "Qwen35ChatHandler")
-_try_add(["GLM-4.6V", "GLM-4.6V-Thinking"], "GLM46VChatHandler")
-_try_add(["GLM-4.1V-Thinking"], "GLM41VChatHandler")
+_try_add(["Qwen3-VL (no thinking)", "Qwen3-VL (thinking)"], "Qwen3VLChatHandler")
+# One entry per family, not per release. Qwen3.6 and Qwen3.8 GGUFs both report `qwen35`
+# as their architecture, so they share this handler; spelling that out in the label saves
+# people hunting for a "Qwen3.8" entry that will never exist.
+_try_add(["Qwen3.5 / 3.6 / 3.8 (no thinking)", "Qwen3.5 / 3.6 / 3.8 (thinking)"], "Qwen35ChatHandler")
+_try_add(["GLM-4.6V (no thinking)", "GLM-4.6V (thinking)"], "GLM46VChatHandler")
+_try_add(["GLM-4.1V (thinking)"], "GLM41VChatHandler")
 _try_add(["LFM2-VL"], "LFM2VLChatHandler")
 _try_add(["LFM2.5-VL"], "LFM25VLChatHandler")
-_try_add(["MiniCPM-v4.5", "MiniCPM-v4.5-Thinking"], "MiniCPMv45ChatHandler")
-_try_add(["MiniCPM-v4.6", "MiniCPM-v4.6-Thinking"], "MiniCPMV46ChatHandler", "MiniCPMv46ChatHandler")
+_try_add(["MiniCPM-v4.5 (no thinking)", "MiniCPM-v4.5 (thinking)"], "MiniCPMv45ChatHandler")
+_try_add(["MiniCPM-v4.6 (no thinking)", "MiniCPM-v4.6 (thinking)"],
+         "MiniCPMV46ChatHandler", "MiniCPMv46ChatHandler")
+
+# Labels shipped before v0.4.0. ComfyUI stores widget values by their text, so a saved
+# workflow still carries the old label and would otherwise land on "Value not in list".
+# These stay resolvable forever; they are deliberately absent from CHAT_HANDLERS so the
+# dropdown only offers the current names.
+_LEGACY_LABELS = {
+    "Qwen3-VL": "Qwen3-VL (no thinking)",
+    "Qwen3-VL-Thinking": "Qwen3-VL (thinking)",
+    "Qwen3.5": "Qwen3.5 / 3.6 / 3.8 (no thinking)",
+    "Qwen3.5-Thinking": "Qwen3.5 / 3.6 / 3.8 (thinking)",
+    "Qwen3.6": "Qwen3.5 / 3.6 / 3.8 (thinking)",
+    "Qwen3.6-Thinking": "Qwen3.5 / 3.6 / 3.8 (thinking)",
+    "GLM-4.6V": "GLM-4.6V (no thinking)",
+    "GLM-4.6V-Thinking": "GLM-4.6V (thinking)",
+    "GLM-4.1V-Thinking": "GLM-4.1V (thinking)",
+    "MiniCPM-v4.5": "MiniCPM-v4.5 (no thinking)",
+    "MiniCPM-v4.5-Thinking": "MiniCPM-v4.5 (thinking)",
+    "MiniCPM-v4.6": "MiniCPM-v4.6 (no thinking)",
+    "MiniCPM-v4.6-Thinking": "MiniCPM-v4.6 (thinking)",
+}
+
+
+def normalize_handler(name):
+    """Current label for a handler name, or None if it is not one we know.
+
+    Accepts both the current labels and the pre-0.4.0 ones, so a workflow saved before
+    the rename keeps working without the user touching the node.
+    """
+    if name in _HANDLERS:
+        return name
+    mapped = _LEGACY_LABELS.get(name)
+    return mapped if mapped in _HANDLERS else None
 
 
 def _resolve_gguf_path(filename):
@@ -336,13 +372,14 @@ class LLMEngine:
                 n_gpu_layers = max(1, int((vram_limit - mmproj_gb) / layer_gb))
 
             print(f"[llm-prompter] Loading clip: {mmproj}")
-            think = "Thinking" in chat_handler_name
+            # Labels carry the mode as a suffix, e.g. "Qwen3.5 / 3.6 / 3.8 (thinking)".
+            think = "(thinking)" in chat_handler_name
             kwargs = {"clip_model_path": mmproj_path, "verbose": False}
-            if chat_handler_name in ("Qwen3-VL", "Qwen3-VL-Thinking"):
+            if chat_handler_name.startswith("Qwen3-VL"):
                 kwargs["force_reasoning"] = think
                 kwargs["image_max_tokens"] = image_max_tokens
                 kwargs["image_min_tokens"] = image_min_tokens
-            elif chat_handler_name in ("MiniCPM-v4.5", "GLM-4.6V", "Qwen3.5"):
+            elif chat_handler_name.startswith(("MiniCPM-v4.5", "MiniCPM-v4.6", "GLM-4.6V", "Qwen3.5")):
                 kwargs["enable_thinking"] = think
             try:
                 cls.chat_handler = handler_cls(**kwargs)

@@ -210,20 +210,24 @@ model family.
 
 | Model (GGUF) | `chat_handler` | Notes |
 |---|---|---|
-| [DavidAU Qwen3.5-9B — Claude-4.6 HERETIC Thinking](https://huggingface.co/DavidAU/Qwen3.5-9B-Claude-4.6-OS-Auto-Variable-HERETIC-UNCENSORED-THINKING-MAX-NEOCODE-Imatrix-GGUF) | `Qwen3.5-Thinking` | vision (mmproj), uncensored, reasons then answers — the node strips the reasoning so only the prompt reaches CLIP |
-| [Qwen3-VL-8B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF) · [4B](https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF) | `Qwen3-VL` | official vision-language, lighter / faster |
-| [unsloth Qwen3.5-9B](https://huggingface.co/unsloth/Qwen3.5-9B-GGUF) | `Qwen3.5` | general Qwen3.5 build |
-| Qwen3.8-27B (any `-mtp` build) | `Qwen3.5-Thinking` | 27B, needs ~16 GB VRAM at Q4_K_M. There is no `Qwen3.8` entry in the dropdown and there does not need to be, see the note below |
+| [DavidAU Qwen3.5-9B — Claude-4.6 HERETIC Thinking](https://huggingface.co/DavidAU/Qwen3.5-9B-Claude-4.6-OS-Auto-Variable-HERETIC-UNCENSORED-THINKING-MAX-NEOCODE-Imatrix-GGUF) | `Qwen3.5 / 3.6 / 3.8 (thinking)` | vision (mmproj), uncensored, reasons then answers — the node strips the reasoning so only the prompt reaches CLIP |
+| [Qwen3-VL-8B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF) · [4B](https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF) | `Qwen3-VL (no thinking)` | official vision-language, lighter / faster |
+| [unsloth Qwen3.5-9B](https://huggingface.co/unsloth/Qwen3.5-9B-GGUF) | `Qwen3.5 / 3.6 / 3.8 (no thinking)` | general Qwen3.5 build |
+| Qwen3.8-27B (any `-mtp` build) | `Qwen3.5 / 3.6 / 3.8 (thinking)` | 27B, needs ~16 GB VRAM at Q4_K_M. 27B, needs ~16 GB VRAM at Q4_K_M |
 | [Gemma 3 4B](https://huggingface.co/unsloth/gemma-3-4b-it-GGUF) | `Gemma3` | **lightest vision model** — grab its `mmproj`; great for low VRAM. Turn `force_offload = on` so it unloads after each prompt (Gemma 3 1B / 270M are text-only, no images) |
 
-**Pick the handler by family, not by release number.** Qwen3.6 and Qwen3.8 GGUFs both report
-`qwen35` as their architecture, so they use the `Qwen3.5` handlers. The dropdown lists families,
-not every model that ships under a new number.
+**Dropdown entries are families, not releases.** Qwen3.6 and Qwen3.8 GGUFs both report
+`qwen35` as their architecture, so they share one entry: `Qwen3.5 / 3.6 / 3.8`. There is no
+separate Qwen3.8 item and there does not need to be.
 
-Plain `Qwen3.5` turns reasoning off. `Qwen3.5-Thinking`, `Qwen3.6` and `Qwen3.6-Thinking` leave it
-on, which is also the model's own default. With a thinking handler, raise `max_tokens` to 2048 or
-more: the reasoning spends the same budget as the answer, and the node strips it only after
-generation, so a low limit cuts the prompt off mid-sentence.
+Each family that supports reasoning has two entries. `(thinking)` lets the model reason before
+answering and the node strips the reasoning, so only the prompt reaches CLIP. `(no thinking)`
+skips it and is faster. With a thinking entry, raise `max_tokens` to 2048 or more: the reasoning
+spends the same budget as the answer, and it is stripped only after generation, so a low limit
+cuts the prompt off mid-sentence.
+
+Handler names changed in v0.4.0 to show this. Workflows saved with the old names keep working,
+the node resolves them automatically.
 
 Any VLM whose family is in the `chat_handler` dropdown works — MiniCPM-V, GLM-4.x-V, Gemma 3,
 LLaVA, and more. For a `-Thinking` handler the model reasons before answering and the node keeps
@@ -336,7 +340,7 @@ keep it resident and enjoy near-instant prompts.
   wire onto the widget) for `final_prompt`, `system_prompt`, `instruction`, `user_preset`, `negative`,
   `prefix`, `suffix`, or even numeric fields like `seed` — then drive them from external text / primitive nodes.
 - **Let the model think, keep the output clean.** Pick a `-Thinking` chat handler (e.g.
-  `Qwen3.5-Thinking`) for better prompts; the node always strips the reasoning so only the final
+  `Qwen3.5 / 3.6 / 3.8 (thinking)`) for better prompts; the node always strips the reasoning so only the final
   prompt reaches CLIP.
 - **Batch a dataset.** Set `mode = batch`, feed a batch of images into `image_1`, and read
   `prompt_list` — one caption per image, ready for LoRA training.
@@ -374,7 +378,7 @@ quietly falls back to a normal load, printing why, in each of these cases:
 `mtp_draft_max` controls how many tokens are drafted per step. 2 is what upstream suggests for
 27B. Higher values draft more but waste more work when a guess is rejected.
 
-For Qwen3.8 builds set `chat_handler` to `Qwen3.5-Thinking`: they are `qwen35` internally, so there is no separate Qwen3.8 entry in the dropdown.
+For Qwen3.8 builds pick `Qwen3.5 / 3.6 / 3.8 (thinking)`: they are `qwen35` internally, so there is no separate Qwen3.8 entry.
 
 Requires `llama-cpp-python` 0.3.48 or newer; `install.py` handles that for you.
 
@@ -400,6 +404,9 @@ Requires `llama-cpp-python` 0.3.48 or newer; `install.py` handles that for you.
   running ComfyUI process; if `llama_cpp` is already imported, `--force-reinstall` would delete the
   old package and fail to write the new one, leaving a broken install. It now detects that and
   prints the command to run with ComfyUI closed instead.
+- **Clearer handler names.** Entries now say `(thinking)` / `(no thinking)`, and the four
+  separate Qwen3.5 / 3.6 items became one `Qwen3.5 / 3.6 / 3.8` pair, since those builds all
+  report `qwen35` as their architecture. Workflows saved with the old names still resolve.
 - Targets `llama-cpp-python` 0.3.48.
 
 ### 0.3.0 — automatic GPU setup + llama 0.3.44 compatibility
