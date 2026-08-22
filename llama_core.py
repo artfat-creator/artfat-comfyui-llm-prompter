@@ -196,7 +196,7 @@ def _resolve_gguf_path(filename):
     return os.path.join(folder_paths.models_dir, "LLM", filename)
 
 
-def _mtp_kwargs(model_path, enabled, draft_max):
+def _mtp_kwargs(model_path, enabled, draft_max, vision=False):
     """Extra Llama() kwargs for MTP speculative decoding, or {} when it cannot be used.
 
     MTP (Multi-Token Prediction) uses NextN heads baked into an "-mtp" GGUF as a built-in
@@ -204,13 +204,24 @@ def _mtp_kwargs(model_path, enabled, draft_max):
     RTX 3090: 17.6 -> 33.5 tok/s (+90%) for +430 MiB VRAM. Gains scale with how predictable
     the text is, so other workloads will differ.
 
-    The toggle means "use it if this model has it", never "enable or die": asking llama.cpp
-    for an MTP context on a model without NextN tensors raises at context creation, which
-    would look like a broken node to anyone who picked a plain GGUF. So the head count is
-    probed from the GGUF header first and the request is dropped (with a printed reason)
-    when the model has none, or when the installed llama-cpp-python predates the API.
+    The toggle means "use it if this model has it", never "enable or die": every way MTP can
+    fail is checked up front and downgraded to a normal load with a printed reason, because
+    each of them otherwise surfaces as a stack trace on an ordinary generation:
+
+      * no NextN tensors -> llama.cpp raises at context creation ("context type MTP requested
+        but model doesn't contain MTP layers").
+      * llama-cpp-python older than 0.3.48 -> the speculative API does not exist yet.
+      * an mmproj is loaded -> images enter the sequence as NEGATIVE placeholder token ids,
+        the MTP drafter re-evals that prefix, and Llama._validate_eval_tokens rejects them
+        ("invalid negative token id at index N: -10214670"). Verified on 0.3.48: text-only
+        with MTP works, the same model with mmproj fails every run. Text and vision are
+        separate loads anyway, so this only costs the speedup on image runs.
     """
     if not enabled:
+        return {}
+    if vision:
+        print("[llm-prompter] mtp_speculative is ON but an mmproj is loaded -> MTP disabled "
+              "for this run (MTP cannot draft across image tokens). Text-only runs still get it.")
         return {}
     heads = get_nextn_count(model_path)
     if heads <= 0:
@@ -307,7 +318,8 @@ class LLMEngine:
 
         model_path = _resolve_gguf_path(model)
         n_gpu_layers = -1
-        mtp_kwargs = _mtp_kwargs(model_path, mtp_speculative, mtp_draft_max)
+        mtp_kwargs = _mtp_kwargs(model_path, mtp_speculative, mtp_draft_max,
+                                 vision=bool(mmproj and mmproj != "None"))
 
         if vram_limit != -1:
             layers = get_layer_count(model_path) or 32

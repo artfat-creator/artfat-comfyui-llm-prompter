@@ -249,7 +249,7 @@ class ArtfatLLMPrompter:
                                              "placeholder": "batch mode: one prompt per line. blank lines skipped, lines starting with # are comments. prefix/suffix still apply to each."}),
                 # --- MTP speculative decoding (added at the END so no positional widget-value drift) ---
                 "mtp_speculative": ("BOOLEAN", {"default": False,
-                                                "tooltip": "Use the model's built-in MTP/NextN heads to draft tokens. Only works on '-mtp' GGUF builds; on any other model it is ignored and the model loads normally. Costs a few hundred MB of VRAM. Measured +90% tok/s on Qwen3.8-27B."}),
+                                                "tooltip": "Use the model's built-in MTP/NextN heads to draft tokens. TEXT-ONLY: automatically disabled when an mmproj is loaded, because MTP cannot draft across image tokens. Only works on '-mtp' GGUF builds; on any other model it is ignored and the model loads normally. Costs a few hundred MB of VRAM. Measured +90% tok/s on Qwen3.8-27B."}),
                 "mtp_draft_max": ("INT", {"default": 2, "min": 1, "max": 8, "step": 1,
                                           "tooltip": "How many tokens MTP drafts ahead per step. 2 is the value upstream recommends for 27B. Higher drafts more but wastes more when a guess is rejected."}),
             },
