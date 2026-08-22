@@ -43,8 +43,10 @@ goes through `SpecConfig`. This node never used it, so nothing breaks here.
 - `graph_mtp` coverage grew. 0.3.44 had cohere2moe, hy_v3, qwen35, qwen35moe,
   step35. 0.3.48 adds bailingmoe3, deepseek2, deepseek32, deepseek4, glm_dsa,
   mimo2, nemotron_h_moe, qwen3next.
-- live in ComfyUI (2026-08-22): the node registers, loads and returns a generated
-  prompt on 0.3.48. Confirmed by the author on the machine described above.
+- live in ComfyUI (2026-08-22), confirmed by the author on the machine described
+  above: the node registers, loads and returns a generated prompt on 0.3.48, both
+  text-only and with two images connected (composite mode). The vision path is the
+  one that broke on the 0.3.40 -> 0.3.44 jump, so this is the check that matters.
 - the list of qwen architecture strings did NOT change. Qwen3.8 registers as
   `qwen35` upstream, so "arch not in the list" is not the failure mode to expect.
 
