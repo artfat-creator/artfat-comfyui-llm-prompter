@@ -50,13 +50,39 @@ goes through `SpecConfig`. This node never used it, so nothing breaks here.
 - the list of qwen architecture strings did NOT change. Qwen3.8 registers as
   `qwen35` upstream, so "arch not in the list" is not the failure mode to expect.
 
+## MTP measured (2026-08-22)
+
+Model: `RVN-Q4_K_M-multilingual-mtp.gguf`, 15.83 GiB, from
+`Qwen3.8-27B-Heretic-Abliterated-Uncensored-GGUF`.
+
+GGUF metadata confirms the detection path works: `general.architecture = qwen35`,
+`qwen35.nextn_predict_layers = 1`, four NextN tensors in `blk.64` (65 blocks total,
+64 trunk + 1 NextN head). The key name guessed earlier was correct, so a pre-load
+check on `<arch>.nextn_predict_layers` is viable.
+
+Enabled with `Llama(..., load_mtp=True, speculative=SpecConfig(spec_type=DRAFT_MTP,
+draft_n_max=2))`. Runtime confirms: `MTP speculative decoding enabled`,
+`type=draft-mtp, model='target-internal-heads'`, `mtp_heads=1`, `n_layer_nextn=1`.
+
+A/B on one machine, same seed, same prompt, warmup before timing, ~250 tokens each:
+
+| | tokens | sec | tok/s |
+|---|---|---|---|
+| plain | 249 | 14.13 | 17.62 |
+| MTP | 250 | 7.46 | 33.51 |
+
+**+90%.** VRAM cost: CUDA0 buffer 15088 -> 15518 MiB, i.e. **+430 MiB** — matching the
+0.42 GiB the model card quotes.
+
+The DeltaNet CUDA bug from ggml-org/llama.cpp discussion #27164 did NOT reproduce on
+the 27B hybrid: output is coherent, not garbage.
+
 ## What was NOT measured
 
-- no MTP run yet. No `-mtp.gguf` on disk at the time of writing, so the actual
-  speedup on this hardware is unknown.
+- one prompt, one workload type. MTP gains scale with how predictable the text is,
+  so other workloads will differ. Do not quote 90% as a general figure.
+- no sweep across `draft_n_max` values; 2 was used throughout.
 - one machine, one CUDA version. cu124/126/128/131 untested.
-- the DeltaNet CUDA bug reported in ggml-org/llama.cpp discussion #27164 did not
-  reproduce here, but that was checked on a 4B model, not on 27B.
 
 ## Regression found
 
