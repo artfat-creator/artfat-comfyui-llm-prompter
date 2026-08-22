@@ -213,7 +213,17 @@ model family.
 | [DavidAU Qwen3.5-9B — Claude-4.6 HERETIC Thinking](https://huggingface.co/DavidAU/Qwen3.5-9B-Claude-4.6-OS-Auto-Variable-HERETIC-UNCENSORED-THINKING-MAX-NEOCODE-Imatrix-GGUF) | `Qwen3.5-Thinking` | vision (mmproj), uncensored, reasons then answers — the node strips the reasoning so only the prompt reaches CLIP |
 | [Qwen3-VL-8B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF) · [4B](https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF) | `Qwen3-VL` | official vision-language, lighter / faster |
 | [unsloth Qwen3.5-9B](https://huggingface.co/unsloth/Qwen3.5-9B-GGUF) | `Qwen3.5` | general Qwen3.5 build |
+| Qwen3.8-27B (any `-mtp` build) | `Qwen3.5-Thinking` | 27B, needs ~16 GB VRAM at Q4_K_M. There is no `Qwen3.8` entry in the dropdown and there does not need to be, see the note below |
 | [Gemma 3 4B](https://huggingface.co/unsloth/gemma-3-4b-it-GGUF) | `Gemma3` | **lightest vision model** — grab its `mmproj`; great for low VRAM. Turn `force_offload = on` so it unloads after each prompt (Gemma 3 1B / 270M are text-only, no images) |
+
+**Pick the handler by family, not by release number.** Qwen3.6 and Qwen3.8 GGUFs both report
+`qwen35` as their architecture, so they use the `Qwen3.5` handlers. The dropdown lists families,
+not every model that ships under a new number.
+
+Plain `Qwen3.5` turns reasoning off. `Qwen3.5-Thinking`, `Qwen3.6` and `Qwen3.6-Thinking` leave it
+on, which is also the model's own default. With a thinking handler, raise `max_tokens` to 2048 or
+more: the reasoning spends the same budget as the answer, and the node strips it only after
+generation, so a low limit cuts the prompt off mid-sentence.
 
 Any VLM whose family is in the `chat_handler` dropdown works — MiniCPM-V, GLM-4.x-V, Gemma 3,
 LLaVA, and more. For a `-Thinking` handler the model reasons before answering and the node keeps
@@ -363,6 +373,8 @@ quietly falls back to a normal load, printing why, in each of these cases:
 
 `mtp_draft_max` controls how many tokens are drafted per step. 2 is what upstream suggests for
 27B. Higher values draft more but waste more work when a guess is rejected.
+
+For Qwen3.8 builds set `chat_handler` to `Qwen3.5-Thinking`: they are `qwen35` internally, so there is no separate Qwen3.8 entry in the dropdown.
 
 Requires `llama-cpp-python` 0.3.48 or newer; `install.py` handles that for you.
 

@@ -187,7 +187,19 @@ class ArtfatLLMPrompter:
             "required": {
                 "model": (models,),
                 "mmproj": (mmprojs, {"default": "None"}),
-                "chat_handler": (CHAT_HANDLERS, {"default": "None"}),
+                "chat_handler": (CHAT_HANDLERS, {
+                    "default": "None",
+                    "tooltip": (
+                        "Chat template for the model. Pick by FAMILY, not by the exact release "
+                        "number: Qwen3.6 and Qwen3.8 builds are all qwen35 inside, so they use "
+                        "the Qwen3.5 handlers. Set to None for text-only (also set mmproj to None "
+                        "to save VRAM).\n\n"
+                        "A '-Thinking' handler lets the model reason first; the node strips the "
+                        "reasoning so only the prompt reaches CLIP. Reasoning spends the same "
+                        "max_tokens budget as the answer, so raise max_tokens to 2048 or more or "
+                        "the prompt gets cut off mid-sentence. Plain 'Qwen3.5' turns thinking off."
+                    ),
+                }),
                 "n_ctx": ("INT", {"default": 8192, "min": 1024, "max": 327680, "step": 128}),
                 "vram_limit": ("INT", {"default": -1, "min": -1, "max": 1024, "step": 1,
                                        "tooltip": "VRAM budget in GB for the LLM (-1 = put all layers on GPU)."}),
