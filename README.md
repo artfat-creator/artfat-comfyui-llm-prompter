@@ -195,6 +195,46 @@ llama package stays). Fix it in this order:
    0) in the node. Slower but stable — and it confirms the problem is the GPU llama build, not the
    node or your workflow.
 
+### AMD GPU (HIP / ROCm) — Windows
+
+`install.py` only auto-fetches NVIDIA CUDA wheels. On AMD (Windows + existing ComfyUI ROCm
+`python_env`), build a HIP-enabled [JamePeng](https://github.com/JamePeng/llama-cpp-python)
+`llama-cpp-python` with the script shipped in this node.
+
+**Layout** (folder names may differ; only the relative paths matter):
+
+```text
+<ComfyUI>/
+  python_env/python.exe          <-- must use THIS interpreter
+  custom_nodes/comfyui-llm-prompter/
+    scripts/build-jamepeng-hip.ps1
+```
+
+**ComfyUI fully closed**, then from the freshly cloned node directory:
+
+```powershell
+cd <ComfyUI>\custom_nodes\comfyui-llm-prompter
+
+# 1) Require llama-cpp-python in ComfyUI's python_env (node import / build hooks need it)
+..\..\python_env\python.exe -m pip install llama-cpp-python
+
+# 2) Require the native build backend (avoids: Cannot import 'scikit_build_core.build')
+..\..\python_env\python.exe -m pip install scikit-build-core "cmake>=3.21" ninja
+
+# 3) Build JamePeng with HIP into that same python_env
+#    Default pins 7562297 (v0.3.48) — matches the node; mtmd ctypes fixed vs broken Aug 20 main
+powershell -ExecutionPolicy Bypass -File .\scripts\build-jamepeng-hip.ps1
+# optional: -Gfx gfx1201
+```
+
+The script resolves `<ComfyUI>\python_env\python.exe` as **two folders up** from this node
+(no hardcoded drive path). Optional: `-Gfx gfx1201` if auto-detect is wrong;
+`-PythonExe <path>` if your ComfyUI Python is not `python_env\python.exe`.
+
+A good install shows `ggml-hip` under `llama_cpp/lib/` and the ComfyUI console prints
+`[llm-prompter] GPU backend: hip` on load. Use a build that includes the chat handlers you
+need (e.g. Qwen3.5) — plain CPU / incomplete HIP packages will not.
+
 ## Models
 
 Put GGUF files in `ComfyUI/models/LLM/`. For image input (VLM) also download the matching

@@ -10,7 +10,12 @@ tqdm
 # detects your torch CUDA version and fetches the matching JamePeng wheel (Windows + NVIDIA).
 # Hardcoding a single CUDA wheel here is WRONG: a cu128 wheel silently falls back to CPU on
 # a cu130 torch (ggml-cuda.dll links cudart64_<major>, which must match torch's). So GPU
-# selection lives in install.py, not here. On CPU-only / non-Windows the node still runs
-# (slower); the model-load warning prints the exact manual command. See:
-# https://github.com/JamePeng/llama-cpp-python/releases
+# selection lives in install.py, not here.
+#
+# AMD Windows (manual — install.py skips without nvidia-smi):
+#   From this node folder, with ComfyUI closed:
+#     ..\..\python_env\python.exe -m pip install llama-cpp-python scikit-build-core "cmake>=3.21" ninja
+#     powershell -ExecutionPolicy Bypass -File .\scripts\build-jamepeng-hip.ps1
+# llama_core.py treats ggml-hip as GPU-ok (not "CPU-only").
+# See: https://github.com/JamePeng/llama-cpp-python/releases
 llama-cpp-python
