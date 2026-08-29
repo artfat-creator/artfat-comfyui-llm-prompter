@@ -8,15 +8,15 @@
 # Usage (from the node folder, ComfyUI CLOSED):
 #   powershell -ExecutionPolicy Bypass -File .\scripts\build-jamepeng-hip.ps1
 #   powershell -ExecutionPolicy Bypass -File .\scripts\build-jamepeng-hip.ps1 -Gfx gfx1201
-#   powershell -ExecutionPolicy Bypass -File .\scripts\build-jamepeng-hip.ps1 -Ref 4854c7d305650b6bc9cf2dc805931a5bf2e40dd0
+#   powershell -ExecutionPolicy Bypass -File .\scripts\build-jamepeng-hip.ps1 -Ref 75622979b0e3fa8590586971bc594c00eec33b76
 
 param(
     [string]$PythonExe = "",
     [string]$Gfx = "",
     [string]$SrcDir = "C:\temp\lpy",
-    # Pin away from main: 4a484f8f (2026-08-20) added mtmd device=NewType and breaks ctypes.
-    # 4854c7d = v0.3.47 (2026-08-15) — last known-good before that mtmd_cpp change.
-    [string]$Ref = "4854c7d305650b6bc9cf2dc805931a5bf2e40dd0"
+    # Default: JamePeng v0.3.48 (7562297). Fixes mtmd device=NewType ctypes break from
+    # 4a484f8f (2026-08-20); verified working on Windows HIP / gfx1201.
+    [string]$Ref = "75622979b0e3fa8590586971bc594c00eec33b76"
 )
 
 $ErrorActionPreference = "Stop"
